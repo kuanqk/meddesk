@@ -38,7 +38,19 @@ docker compose exec backend python manage.py createsuperuser
 docker compose exec backend python manage.py collectstatic --noinput
 ```
 
-Приложение будет доступно на порту 80.
+Приложение будет доступно на порту 8090 (или на порту из `docker-compose.yml`).
+
+Данные планировщика хранятся в PostgreSQL (volume `postgres_data`) через `PUT /api/v1/scheduler/state/`.
+
+**Безопасное обновление на сервере** (данные не удаляются):
+
+```bash
+git pull
+docker compose up -d --build
+docker compose exec backend python manage.py migrate
+```
+
+Не используйте `docker compose down -v` — флаг `-v` удалит базу данных.
 
 ## API
 
@@ -48,6 +60,8 @@ docker compose exec backend python manage.py collectstatic --noinput
 | POST | `/api/v1/staff/` | Добавить сотрудника |
 | PATCH | `/api/v1/staff/{id}/` | Изменить |
 | DELETE | `/api/v1/staff/{id}/` | Удалить |
+| GET | `/api/v1/scheduler/state/` | Загрузить расписание |
+| PUT | `/api/v1/scheduler/state/` | Сохранить расписание |
 | POST | `/api/v1/auth/login/` | JWT login |
 | POST | `/api/v1/auth/refresh/` | JWT refresh |
 

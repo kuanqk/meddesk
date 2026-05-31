@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from .models import DaySlot, HourSlot, Room, WeekTemplate
+from .scheduler_state import SchedulerState
 
 
 class HourSlotInline(admin.TabularInline):
@@ -30,3 +31,9 @@ class DaySlotAdmin(admin.ModelAdmin):
 @admin.register(HourSlot)
 class HourSlotAdmin(admin.ModelAdmin):
     list_display = ("day_slot", "hour")
+
+
+@admin.register(SchedulerState)
+class SchedulerStateAdmin(admin.ModelAdmin):
+    list_display = ("clinic", "updated_at")
+    readonly_fields = ("updated_at",)

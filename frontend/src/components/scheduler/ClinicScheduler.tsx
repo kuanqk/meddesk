@@ -1,5 +1,6 @@
 // @ts-nocheck — ported from docs/clinic_scheduler_v2.jsx; API integration pending
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { fetchSchedulerState, saveSchedulerState } from "../../api/scheduler";
 
 const HOURS    = Array.from({ length: 14 }, (_, i) => i + 8);
 const DAYS     = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
@@ -68,6 +69,33 @@ function initSchedule(people) {
   s["dana"][0].room = 2; s["dana"][1].room = 2;
   s["dana"][2].room = 2; s["dana"][3].room = 2;
   [0,1,2,3].forEach(di => { for (let h=9;h<18;h++) s["dana"][di].hours.add(h); });
+  return s;
+}
+
+function scheduleToJson(schedule) {
+  const out = {};
+  Object.keys(schedule).forEach((pid) => {
+    out[pid] = {};
+    Object.keys(schedule[pid]).forEach((di) => {
+      const cell = schedule[pid][di];
+      out[pid][di] = { room: cell.room, hours: [...cell.hours] };
+    });
+  });
+  return out;
+}
+
+function scheduleFromJson(json, peopleList) {
+  const s = {};
+  peopleList.forEach((p) => {
+    s[p.id] = {};
+    DAYS.forEach((_, di) => {
+      const day = json?.[p.id]?.[di] ?? json?.[p.id]?.[String(di)];
+      s[p.id][di] = {
+        room: day?.room ?? null,
+        hours: new Set(day?.hours ?? []),
+      };
+    });
+  });
   return s;
 }
 
@@ -221,6 +249,47 @@ export default function ClinicScheduler() {
 
   // Schedule keyed by person id
   const [schedule, setSchedule] = useState(() => initSchedule(INITIAL_DOCTORS));
+  const [isLoading, setIsLoading] = useState(true);
+  const [saveStatus, setSaveStatus] = useState("");
+  const skipSave = useRef(true);
+  const saveTimer = useRef(null);
+
+  useEffect(() => {
+    fetchSchedulerState()
+      .then((data) => {
+        if (data?.people?.length) {
+          setPeople(data.people);
+          setSchedule(scheduleFromJson(data.schedule || {}, data.people));
+          if (data.expenses) setExpenses(data.expenses);
+          const nextSel = data.sel_id && data.people.find((p) => p.id === data.sel_id)
+            ? data.sel_id
+            : data.people[0]?.id || null;
+          setSelId(nextSel);
+        }
+      })
+      .catch(() => setSaveStatus("error"))
+      .finally(() => {
+        setIsLoading(false);
+        skipSave.current = false;
+      });
+  }, []);
+
+  useEffect(() => {
+    if (skipSave.current || isLoading) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    setSaveStatus("saving");
+    saveTimer.current = setTimeout(() => {
+      saveSchedulerState({
+        people,
+        schedule: scheduleToJson(schedule),
+        expenses,
+        sel_id: selId,
+      })
+        .then(() => setSaveStatus("saved"))
+        .catch(() => setSaveStatus("error"));
+    }, 800);
+    return () => clearTimeout(saveTimer.current);
+  }, [people, schedule, expenses, selId, isLoading]);
 
   /* ── Person CRUD ── */
   const handleSavePerson = (obj) => {
@@ -358,6 +427,14 @@ export default function ClinicScheduler() {
   const anesthesists  = people.filter(p=>p.role==="anesthesiologist");
 
   // ── Render ──
+  if (isLoading) {
+    return (
+      <div style={{ minHeight:"100vh", background:C.bg, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter','Segoe UI',sans-serif", color:C.textSub }}>
+        Загрузка...
+      </div>
+    );
+  }
+
   return (
     <div style={{ minHeight:"100vh", background:C.bg, color:C.text, fontFamily:"'Inter','Segoe UI',sans-serif", fontSize:13 }}>
       {modal && (
@@ -377,7 +454,10 @@ export default function ClinicScheduler() {
             <div style={{ fontSize:11, color:C.accent, letterSpacing:2, textTransform:"uppercase", fontWeight:600, marginBottom:4 }}>Стоматологическая клиника</div>
             <div style={{ fontSize:20, fontWeight:700, letterSpacing:-0.5 }}>Планировщик расписания · Июнь 2026</div>
           </div>
-          <div style={{ display:"flex", gap:10 }}>
+          <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+            {saveStatus === "saving" && <span style={{ fontSize:11, color:C.textMuted }}>Сохранение...</span>}
+            {saveStatus === "saved" && <span style={{ fontSize:11, color:C.green }}>Сохранено</span>}
+            {saveStatus === "error" && <span style={{ fontSize:11, color:C.red }}>Ошибка сохранения</span>}
             {[
               { label:"Выручка",   value:fmt(stats.totalRevenue), bg:C.greenBg,  bd:"#bbf7d0", cl:C.green },
               { label:"Прибыль",   value:fmt(stats.profit), bg:stats.profit>0?C.greenBg:C.redBg, bd:stats.profit>0?"#bbf7d0":"#fecaca", cl:stats.profit>0?C.green:C.red },
