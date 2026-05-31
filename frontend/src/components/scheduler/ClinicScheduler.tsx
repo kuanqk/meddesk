@@ -250,9 +250,10 @@ export default function ClinicScheduler() {
   // Schedule keyed by person id
   const [schedule, setSchedule] = useState(() => initSchedule(INITIAL_DOCTORS));
   const [isLoading, setIsLoading] = useState(true);
+  const [isDirty, setIsDirty] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState("");
-  const skipSave = useRef(true);
-  const saveTimer = useRef(null);
+  const skipDirty = useRef(true);
 
   useEffect(() => {
     fetchSchedulerState()
@@ -270,26 +271,43 @@ export default function ClinicScheduler() {
       .catch(() => setSaveStatus("error"))
       .finally(() => {
         setIsLoading(false);
-        skipSave.current = false;
+        skipDirty.current = false;
       });
   }, []);
 
   useEffect(() => {
-    if (skipSave.current || isLoading) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
+    if (skipDirty.current || isLoading) return;
+    setIsDirty(true);
+    setSaveStatus("dirty");
+  }, [people, schedule, expenses, isLoading]);
+
+  useEffect(() => {
+    const onBeforeUnload = (e) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [isDirty]);
+
+  const handleGlobalSave = () => {
+    setIsSaving(true);
     setSaveStatus("saving");
-    saveTimer.current = setTimeout(() => {
-      saveSchedulerState({
-        people,
-        schedule: scheduleToJson(schedule),
-        expenses,
-        sel_id: selId,
+    saveSchedulerState({
+      people,
+      schedule: scheduleToJson(schedule),
+      expenses,
+      sel_id: selId,
+    })
+      .then(() => {
+        setIsDirty(false);
+        setSaveStatus("saved");
       })
-        .then(() => setSaveStatus("saved"))
-        .catch(() => setSaveStatus("error"));
-    }, 800);
-    return () => clearTimeout(saveTimer.current);
-  }, [people, schedule, expenses, selId, isLoading]);
+      .catch(() => setSaveStatus("error"))
+      .finally(() => setIsSaving(false));
+  };
 
   /* ── Person CRUD ── */
   const handleSavePerson = (obj) => {
@@ -455,9 +473,36 @@ export default function ClinicScheduler() {
             <div style={{ fontSize:20, fontWeight:700, letterSpacing:-0.5 }}>Планировщик расписания · Июнь 2026</div>
           </div>
           <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-            {saveStatus === "saving" && <span style={{ fontSize:11, color:C.textMuted }}>Сохранение...</span>}
-            {saveStatus === "saved" && <span style={{ fontSize:11, color:C.green }}>Сохранено</span>}
-            {saveStatus === "error" && <span style={{ fontSize:11, color:C.red }}>Ошибка сохранения</span>}
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4, marginRight:4 }}>
+              <button
+                onClick={handleGlobalSave}
+                disabled={!isDirty || isSaving}
+                style={{
+                  background: isDirty ? C.accent : C.bg,
+                  color: isDirty ? "#fff" : C.textMuted,
+                  border: `1.5px solid ${isDirty ? C.accent : C.border2}`,
+                  borderRadius: 8,
+                  padding: "8px 20px",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: !isDirty || isSaving ? "not-allowed" : "pointer",
+                  fontFamily: "inherit",
+                  opacity: !isDirty || isSaving ? 0.7 : 1,
+                  transition: "all 0.15s",
+                }}
+              >
+                {isSaving ? "Сохранение..." : "Сохранить"}
+              </button>
+              {saveStatus === "dirty" && (
+                <span style={{ fontSize: 10, color: C.amber }}>Есть несохранённые изменения</span>
+              )}
+              {saveStatus === "saved" && (
+                <span style={{ fontSize: 10, color: C.green }}>Сохранено</span>
+              )}
+              {saveStatus === "error" && (
+                <span style={{ fontSize: 10, color: C.red }}>Ошибка сохранения</span>
+              )}
+            </div>
             {[
               { label:"Выручка",   value:fmt(stats.totalRevenue), bg:C.greenBg,  bd:"#bbf7d0", cl:C.green },
               { label:"Прибыль",   value:fmt(stats.profit), bg:stats.profit>0?C.greenBg:C.redBg, bd:stats.profit>0?"#bbf7d0":"#fecaca", cl:stats.profit>0?C.green:C.red },
