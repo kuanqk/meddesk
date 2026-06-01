@@ -52,6 +52,22 @@ docker compose exec backend python manage.py migrate
 
 Не используйте `docker compose down -v` — флаг `-v` удалит базу данных.
 
+## Авторизация
+
+Вход по логину и паролю (JWT). После входа вкладки фильтруются по роли:
+
+| Роль | Вкладки |
+|---|---|
+| owner, admin | все |
+| doctor, anesthesiologist | Расписание, По дням |
+| receptionist | Расписание, По дням, Кабинеты |
+
+Суперпользователь Django видит все вкладки. Для обычных пользователей создайте **Clinic** и **Clinic membership** в `/admin/` с нужной ролью.
+
+```bash
+docker compose exec backend python manage.py createsuperuser
+```
+
 ## API
 
 | Метод | URL | Описание |
@@ -64,6 +80,7 @@ docker compose exec backend python manage.py migrate
 | PUT | `/api/v1/scheduler/state/` | Сохранить расписание |
 | POST | `/api/v1/auth/login/` | JWT login |
 | POST | `/api/v1/auth/refresh/` | JWT refresh |
+| GET | `/api/v1/auth/me/` | Текущий пользователь и доступные вкладки |
 
 ## Тесты
 

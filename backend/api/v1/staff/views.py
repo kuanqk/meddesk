@@ -1,5 +1,5 @@
 from rest_framework import viewsets
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 
 from apps.staff.models import StaffMember
 
@@ -8,7 +8,7 @@ from .serializers import StaffMemberSerializer
 
 class StaffMemberViewSet(viewsets.ModelViewSet):
     serializer_class = StaffMemberSerializer
-    permission_classes = [AllowAny]  # TODO: restrict after auth is wired up
+    permission_classes = [IsAuthenticated]
     queryset = StaffMember.objects.select_related("clinic").prefetch_related(
         "salary_rule"
     )

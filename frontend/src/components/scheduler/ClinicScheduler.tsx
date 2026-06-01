@@ -1,6 +1,7 @@
 // @ts-nocheck — ported from docs/clinic_scheduler_v2.jsx; API integration pending
 import { useState, useMemo, useEffect, useRef } from "react";
 import { fetchSchedulerState, saveSchedulerState } from "../../api/scheduler";
+import { useAuth } from "../../context/AuthContext";
 
 const HOURS    = Array.from({ length: 14 }, (_, i) => i + 8);
 const DAYS     = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
@@ -14,6 +15,13 @@ const PALETTE = [
   "#3b82f6","#7c3aed","#059669","#d97706","#db2777",
   "#0891b2","#ea580c","#65a30d","#9333ea","#e11d48",
   "#0284c7","#16a34a","#b45309","#6366f1","#dc2626",
+];
+
+const TAB_ITEMS = [
+  { id: "schedule", label: "📅 Расписание" },
+  { id: "pl", label: "💰 P&L" },
+  { id: "week", label: "📆 По дням" },
+  { id: "rooms", label: "🏥 Кабинеты" },
 ];
 
 const INITIAL_DOCTORS = [
@@ -235,6 +243,9 @@ function PersonModal({ person, allPeople, onSave, onClose, C }) {
 
 /* ─── MAIN COMPONENT ─────────────────────────────────────────── */
 export default function ClinicScheduler() {
+  const { user, allowedTabs, logout } = useAuth();
+  const visibleTabs = TAB_ITEMS.filter((t) => allowedTabs.includes(t.id));
+
   const [activeTab,    setActiveTab]    = useState("schedule");
   const [expenses,     setExpenses]     = useState({ rent:1000000, marketing:1600000, materials:1400000, other:800000, anesthesia_pct:13 });
   const [weekFilter,   setWeekFilter]   = useState("all");
@@ -254,6 +265,12 @@ export default function ClinicScheduler() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState("");
   const skipDirty = useRef(true);
+
+  useEffect(() => {
+    if (visibleTabs.length && !visibleTabs.find((t) => t.id === activeTab)) {
+      setActiveTab(visibleTabs[0].id);
+    }
+  }, [visibleTabs, activeTab]);
 
   useEffect(() => {
     fetchSchedulerState()
@@ -471,8 +488,23 @@ export default function ClinicScheduler() {
           <div>
             <div style={{ fontSize:11, color:C.accent, letterSpacing:2, textTransform:"uppercase", fontWeight:600, marginBottom:4 }}>Стоматологическая клиника</div>
             <div style={{ fontSize:20, fontWeight:700, letterSpacing:-0.5 }}>Планировщик расписания · Июнь 2026</div>
+            {user && (
+              <div style={{ fontSize:11, color:C.textMuted, marginTop:4 }}>
+                {user.username}{user.role_label ? ` · ${user.role_label}` : ""}
+              </div>
+            )}
           </div>
           <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+            <button
+              onClick={logout}
+              style={{
+                background:C.bg, border:`1px solid ${C.border2}`, borderRadius:8,
+                padding:"8px 14px", fontSize:12, fontWeight:600, color:C.textSub,
+                cursor:"pointer", fontFamily:"inherit",
+              }}
+            >
+              Выйти
+            </button>
             <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4, marginRight:4 }}>
               <button
                 onClick={handleGlobalSave}
@@ -517,7 +549,7 @@ export default function ClinicScheduler() {
           </div>
         </div>
         <div style={{ display:"flex", gap:2 }}>
-          {[{id:"schedule",label:"📅 Расписание"},{id:"pl",label:"💰 P&L"},{id:"week",label:"📆 По дням"},{id:"rooms",label:"🏥 Кабинеты"}].map(t=>(
+          {visibleTabs.map(t=>(
             <button key={t.id} onClick={()=>setActiveTab(t.id)} style={{
               background:"transparent", border:"none",
               borderBottom: activeTab===t.id?`2px solid ${C.accent}`:"2px solid transparent",
