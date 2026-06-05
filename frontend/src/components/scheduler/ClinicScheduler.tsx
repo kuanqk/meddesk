@@ -472,19 +472,6 @@ export default function ClinicScheduler() {
 
   return (
     <div style={{ minHeight:"100vh", background:C.bg, color:C.text, fontFamily:"'Inter','Segoe UI',sans-serif", fontSize:13 }}>
-      {/* ── FIXED LOGOUT ── */}
-      <button
-        onClick={logout}
-        style={{
-          position:"fixed", top:60, right:20, zIndex:1000,
-          background:"#fff", border:"1px solid #d1cec6", borderRadius:8,
-          padding:"7px 14px", fontSize:12, fontWeight:600, color:"#6b6760",
-          cursor:"pointer", fontFamily:"inherit", boxShadow:"0 1px 4px rgba(0,0,0,0.08)",
-        }}
-      >
-        Выйти
-      </button>
-
       {modal && (
         <PersonModal
           person={modal.person||null}
@@ -508,6 +495,16 @@ export default function ClinicScheduler() {
             )}
           </div>
           <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+            <button
+              onClick={logout}
+              style={{
+                background:"#fff", border:"1px solid #d1cec6", borderRadius:8,
+                padding:"7px 14px", fontSize:12, fontWeight:600, color:"#6b6760",
+                cursor:"pointer", fontFamily:"inherit",
+              }}
+            >
+              Выйти
+            </button>
             <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4, marginRight:4 }}>
               <button
                 onClick={handleGlobalSave}
