@@ -114,3 +114,7 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=JWT_REFRESH_DAYS),
     "ROTATE_REFRESH_TOKENS": True,
 }
+
+# MacDent API
+MACDENT_API_TOKEN = os.environ.get("MACDENT_API_TOKEN", "")
+MACDENT_FILIAL_ID = os.environ.get("MACDENT_FILIAL_ID", "1196")
