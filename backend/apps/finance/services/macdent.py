@@ -40,7 +40,7 @@ class MacDentClient:
             "date_from": date_from,
             "date_to": date_to,
         })
-        return data.get("data", [])
+        return data.get("payments", data.get("data", []))
 
     def get_payment_detail(self, payment_id) -> dict:
         return self._post("payment", "get_detailed", {"id": payment_id})
@@ -52,7 +52,7 @@ class MacDentClient:
             "date_from": date_from,
             "date_to": date_to,
         })
-        return data.get("data", [])
+        return data.get("rashodi", data.get("data", []))
 
     # ── Записи пациентов ───────────────────────────────────────────────────
 
@@ -61,13 +61,13 @@ class MacDentClient:
             "date_from": date_from,
             "date_to": date_to,
         })
-        return data.get("data", [])
+        return data.get("zapis", data.get("data", []))
 
     # ── Врачи ──────────────────────────────────────────────────────────────
 
     def get_doctors(self) -> list:
         data = self._post("doctor", "find", {})
-        return data.get("data", [])
+        return data.get("doctors", data.get("data", []))
 
     # ── Расписание ─────────────────────────────────────────────────────────
 
@@ -76,4 +76,4 @@ class MacDentClient:
             "date_from": date_from,
             "date_to": date_to,
         })
-        return data.get("data", [])
+        return data.get("rasps", data.get("data", []))
