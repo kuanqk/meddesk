@@ -196,6 +196,12 @@ class DailyReport(models.Model):
         default=False,
         help_text="Закрытый день — нельзя редактировать",
     )
+    source_file = models.CharField(
+        "Исходный файл",
+        max_length=255,
+        blank=True,
+        help_text="Имя .xlsx файла при импорте через import_excel",
+    )
 
     class Meta:
         verbose_name = "Дневной отчёт"
