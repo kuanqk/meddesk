@@ -476,7 +476,7 @@ export default function ClinicScheduler() {
       <button
         onClick={logout}
         style={{
-          position:"fixed", top:16, right:20, zIndex:1000,
+          position:"fixed", top:60, right:20, zIndex:1000,
           background:"#fff", border:"1px solid #d1cec6", borderRadius:8,
           padding:"7px 14px", fontSize:12, fontWeight:600, color:"#6b6760",
           cursor:"pointer", fontFamily:"inherit", boxShadow:"0 1px 4px rgba(0,0,0,0.08)",
