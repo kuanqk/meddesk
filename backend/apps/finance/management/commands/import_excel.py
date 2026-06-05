@@ -77,32 +77,88 @@ def to_dec(val) -> Decimal | None:
         return None
 
 
-def parse_sheet_date(title: str):
-    """
-    "Расчеты 02.06.26 "  → date(2026, 6, 2)
-    "Расчеты 30-31.05.26" → date(2026, 5, 30)   (use first day of range)
-    Returns None if unparseable.
-    """
+def _date_part(title: str) -> str | None:
     clean = title.strip()
     if not clean.startswith("Расчеты "):
         return None
-    date_part = clean[len("Расчеты "):].strip()
+    return clean[len("Расчеты "):].strip()
 
-    # direct parse
+
+# Same-month range:  "30-31.05.26" / "7-8.08.25"
+_RE_SAME_MONTH = re.compile(r"^(\d{1,2})-(\d{1,2})\.(\d{1,2})\.(\d{2})$")
+# Cross-month range: "28.04-01.05.26"
+_RE_CROSS_MONTH = re.compile(r"^(\d{1,2})\.(\d{1,2})-(\d{1,2})\.(\d{1,2})\.(\d{2})$")
+
+
+def parse_sheet_date(title: str):
+    """
+    Return the LAST date of the sheet (use last day if range).
+
+    Examples:
+      "Расчеты 02.06.26"        → 2026-06-02
+      "Расчеты 30-31.05.26"     → 2026-05-31
+      "Расчеты 7-8.08.25"       → 2025-08-08
+      "Расчеты 28.04-01.05.26"  → 2026-05-01  (cross-month)
+
+    Returns None if unparseable.
+    """
+    date_part = _date_part(title)
+    if date_part is None:
+        return None
+
+    # Single-day "dd.mm.yy"
     try:
         return datetime.strptime(date_part, "%d.%m.%y").date()
     except ValueError:
         pass
 
-    # range like "30-31.05.26" → take first day
-    m = re.match(r"(\d{1,2})-\d{1,2}\.(\d{2}\.\d{2})$", date_part)
+    # Cross-month "d.m-d.m.yy" → last day = (g3, g4, g5)
+    m = _RE_CROSS_MONTH.match(date_part)
     if m:
         try:
-            return datetime.strptime(f"{m.group(1)}.{m.group(2)}", "%d.%m.%y").date()
+            return datetime.strptime(f"{m.group(3)}.{m.group(4)}.{m.group(5)}", "%d.%m.%y").date()
+        except ValueError:
+            pass
+
+    # Same-month "d-d.m.yy" → last day = (g2, g3, g4)
+    m = _RE_SAME_MONTH.match(date_part)
+    if m:
+        try:
+            return datetime.strptime(f"{m.group(2)}.{m.group(3)}.{m.group(4)}", "%d.%m.%y").date()
         except ValueError:
             pass
 
     return None
+
+
+def get_first_date_of_range(title: str):
+    """
+    For range sheets, return the FIRST date (used to delete legacy imports).
+    Returns None if the sheet is not a range.
+    """
+    date_part = _date_part(title)
+    if date_part is None:
+        return None
+
+    m = _RE_CROSS_MONTH.match(date_part)
+    if m:
+        try:
+            return datetime.strptime(f"{m.group(1)}.{m.group(2)}.{m.group(5)}", "%d.%m.%y").date()
+        except ValueError:
+            pass
+
+    m = _RE_SAME_MONTH.match(date_part)
+    if m:
+        try:
+            return datetime.strptime(f"{m.group(1)}.{m.group(3)}.{m.group(4)}", "%d.%m.%y").date()
+        except ValueError:
+            pass
+
+    return None
+
+
+def is_range_sheet(title: str) -> bool:
+    return get_first_date_of_range(title) is not None
 
 
 def parse_sheet(ws) -> dict:
@@ -232,31 +288,7 @@ def save_sheet(parsed: dict, source_file: str, dry_run: bool) -> dict:
     with db_transaction.atomic():
         report = DailyReport.objects.create(date=d, source_file=source_file)
 
-        # opening balances
-        for account, amount in parsed["opening"].items():
-            DailyBalance.objects.create(
-                report=report,
-                account=account,
-                balance_start=amount,
-                balance_end=Decimal("0"),
-            )
-
-        # closing balances — update existing or create
-        for account, amount in parsed["closing"].items():
-            DailyBalance.objects.update_or_create(
-                report=report,
-                account=account,
-                defaults={"balance_end": amount},
-            )
-        # ensure any account with only a closing balance exists
-        for account, amount in parsed["closing"].items():
-            DailyBalance.objects.get_or_create(
-                report=report,
-                account=account,
-                defaults={"balance_start": Decimal("0"), "balance_end": amount},
-            )
-
-        # transactions
+        # transactions first (so we can compute totals)
         for t in txns:
             DailyTransaction.objects.create(
                 report=report,
@@ -268,6 +300,31 @@ def save_sheet(parsed: dict, source_file: str, dry_run: bool) -> dict:
                 source="excel",
             )
             stats["tx_saved"] += 1
+
+        # Compute per-account income / expense from saved transactions
+        TRANS_ACCOUNTS = ("kaspi_pay", "halyk", "cash")
+        totals = {a: {"income": Decimal("0"), "expense": Decimal("0")} for a in TRANS_ACCOUNTS}
+        for t in txns:
+            if t["account"] in totals:
+                totals[t["account"]][t["direction"]] += t["amount"]
+
+        # Write balances: balance_start (from Excel opening), balance_end = start + income - expense
+        all_accounts = (
+            set(parsed["opening"]) | set(parsed["closing"]) | set(TRANS_ACCOUNTS)
+        )
+        for account in all_accounts:
+            start = parsed["opening"].get(account, Decimal("0"))
+            if account in totals:
+                end = start + totals[account]["income"] - totals[account]["expense"]
+            else:
+                # Account not in the transaction layout (e.g. USD) — use Excel closing if present
+                end = parsed["closing"].get(account, start)
+
+            DailyBalance.objects.update_or_create(
+                report=report,
+                account=account,
+                defaults={"balance_start": start, "balance_end": end},
+            )
 
     return stats
 
@@ -292,12 +349,19 @@ class Command(BaseCommand):
             action="store_true",
             help="Только парсить, не сохранять. Печатает статистику.",
         )
+        parser.add_argument(
+            "--reparse-ranges",
+            action="store_true",
+            help="Обработать только листы с диапазоном дат (например 30-31.05.26). "
+                 "Удаляет ранее импортированные записи по ПЕРВОЙ дате диапазона.",
+        )
 
     def handle(self, *args, **options):
         if openpyxl is None:
             raise CommandError("openpyxl не установлен. Выполни: pip install openpyxl")
 
         dry_run = options["dry_run"]
+        reparse_ranges = options["reparse_ranges"]
 
         # collect files
         if options["file"]:
@@ -333,6 +397,27 @@ class Command(BaseCommand):
 
             for sheet_name in wb.sheetnames:
                 ws = wb[sheet_name]
+
+                # In --reparse-ranges mode, only process range sheets and clean up legacy.
+                if reparse_ranges:
+                    first_date = get_first_date_of_range(sheet_name)
+                    if first_date is None:
+                        continue  # skip non-range sheets
+
+                    if not dry_run:
+                        # Remove legacy report keyed by the FIRST date of the range
+                        # (only if it was imported from Excel — preserves manual entries)
+                        deleted, _ = (
+                            DailyReport.objects
+                            .filter(date=first_date)
+                            .exclude(source_file="")
+                            .delete()
+                        )
+                        if deleted:
+                            self.stdout.write(
+                                f"  🗑  Удалён старый отчёт за {first_date} (из диапазона)"
+                            )
+
                 parsed = parse_sheet(ws)
                 stats = save_sheet(parsed, fpath.name, dry_run)
 

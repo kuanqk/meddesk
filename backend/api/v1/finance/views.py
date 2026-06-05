@@ -338,19 +338,19 @@ def _build_report_response(report_date: date) -> dict:
         }
 
     except DailyReport.DoesNotExist:
-        # Carry forward most recent closing balances
-        prev = (
-            DailyReport.objects
-            .filter(date__lt=report_date)
-            .prefetch_related("balances")
-            .order_by("-date")
-            .first()
-        )
+        # For each account independently, find the most recent balance_end
+        # from any prior report. This correctly bridges gap days (weekends/holidays)
+        # where an account may not have a balance row.
         opening = {a: ZERO for a in _BALANCE_ACCOUNTS}
-        if prev:
-            for b in prev.balances.all():
-                if b.account in opening:
-                    opening[b.account] = str(b.balance_end)
+        for account in _BALANCE_ACCOUNTS:
+            last_bal = (
+                DailyBalance.objects
+                .filter(report__date__lt=report_date, account=account)
+                .order_by("-report__date")
+                .first()
+            )
+            if last_bal:
+                opening[account] = str(last_bal.balance_end)
 
         return {
             "date":             str(report_date),
