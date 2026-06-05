@@ -2,6 +2,11 @@
 > Финансовый модуль для стоматологической клиники BALA DENT  
 > Интеграция: MacDent API + ручной ввод + аналитика
 
+> **Статус на 2026-06-05:** фазы 1, 2 (модели + клиент), 3, 5 реализованы.
+> Фаза 4 (UI ФОТ) и фаза 2 в части Celery — ещё не сделаны.
+> MacDent работает только на **тестовом токене** — боевой токен от клиники
+> пока не получен, реальный sync на проде не запускался.
+
 ---
 
 ## 0. Контекст и цель
@@ -58,7 +63,7 @@ apps/
 
 ## 2. Модели базы данных
 
-### 2.1 Обновление StaffMember (apps/staff/models.py)
+### 2.1 Обновление StaffMember (apps/staff/models.py) ✅ Реализовано
 ```python
 class StaffMember(models.Model):
     # ... существующие поля ...
@@ -89,7 +94,13 @@ class StaffMember(models.Model):
     )
 ```
 
-### 2.2 Новые модели (apps/finance/models.py)
+### 2.2 Новые модели (apps/finance/models.py) ✅ Реализовано
+
+> **Отличия от первоначального спека:**
+> - `DailyReport` дополнительно содержит `source_file` (имя xlsx при импорте),
+>   `closed_by` (FK→User, кто закрыл день), `closed_at` (DateTimeField).
+>   У `is_closed` есть UI-кнопки close/reopen — переоткрыть может только owner.
+> - Все `verbose_name` на русском, типы остальных полей идентичны спеку.
 
 ```python
 from django.db import models
@@ -268,7 +279,17 @@ class DailyBalance(models.Model):
 
 ---
 
-## 3. MacDent API клиент
+## 3. MacDent API клиент ⚠️ Реализован, ждём боевой токен
+
+> **Статус:** код в `apps/finance/services/macdent.py` готов и протестирован
+> на **тестовом** токене (`1196:1:xxx`). Реальный токен от клиники BALA DENT
+> ещё не получен — синхронизация на проде не включалась.
+>
+> **Отличия от спека:** в response разных endpoints данные лежат в разных
+> ключах: `pays` / `rashodi` / `zapis` / `doctors` / `rasps` (а не `data`).
+> Клиент учитывает оба варианта. Поле выручки врача — `summ`, не `amount`;
+> дата приходит в формате `DD.MM.YYYY`. Эти моменты учтены в
+> `FinanceSyncService._save_revenues()`.
 
 ```python
 # apps/finance/services/macdent.py
@@ -348,7 +369,7 @@ class MacDentClient:
 
 ---
 
-## 4. Сервис синхронизации и расчёта ФОТ
+## 4. Сервис синхронизации и расчёта ФОТ ✅ Код готов, ждёт боевого токена
 
 ```python
 # apps/finance/services/sync.py
@@ -472,7 +493,7 @@ class FinanceSyncService:
 
 ---
 
-## 5. Celery — фоновые задачи
+## 5. Celery — фоновые задачи 🔲 Ещё не подключено
 
 ```python
 # apps/finance/tasks.py
@@ -527,7 +548,26 @@ CELERY_BEAT_SCHEDULE = {
 
 ---
 
-## 6. API Endpoints
+## 6. API Endpoints ✅ Реализовано (с расширениями)
+
+> **Реально реализованные endpoints** (см. `api/v1/finance/urls.py`):
+>
+> ```
+> GET  /api/v1/finance/summary/?from=YYYY-MM&to=YYYY-MM
+> GET  /api/v1/finance/daily/?from=YYYY-MM-DD&to=YYYY-MM-DD
+> GET  /api/v1/finance/expenses/?from=YYYY-MM&to=YYYY-MM   (по 6 категориям-ключам)
+> GET  /api/v1/finance/balances/?from=YYYY-MM-DD&to=YYYY-MM-DD
+>
+> GET  /api/v1/finance/daily-report/?date=YYYY-MM-DD       (upsert-like форма)
+> POST /api/v1/finance/daily-report/                        (создать/обновить)
+> POST /api/v1/finance/daily-report/close/                  (owner-only)
+> POST /api/v1/finance/daily-report/reopen/                 (owner-only)
+> GET  /api/v1/finance/daily-report/closed-dates/?month=YYYY-MM
+> ```
+>
+> Категории расходов сейчас определяются keyword-фильтрами на стороне сервера
+> (`Q(comment__icontains=...)`), а не справочником `TransactionCategory`.
+> Полный pnl / payroll / sync UI endpoints пока не реализованы.
 
 ```python
 # api/v1/finance/urls.py
@@ -736,34 +776,38 @@ else:
 
 ## 12. Порядок внедрения
 
-### Фаза 1 — Данные (2 недели)
-- [ ] Добавить `macdent_id` в StaffMember + миграция
-- [ ] Создать все модели Finance + миграции
-- [ ] Загрузить категории `TransactionCategory` через fixtures
-- [ ] Реализовать `MacDentClient` + тест на реальном API
-- [ ] `import_excel` management command — импорт исторических данных 2024-2026
-- [ ] Заполнить `macdent_id` для каждого врача через `doctor/find`
+### Фаза 1 — Данные ✅
+- [x] Добавить `macdent_id` в StaffMember + миграция
+- [x] Создать все модели Finance + миграции
+- [ ] Загрузить категории `TransactionCategory` через fixtures *(не нужно — пока используем keyword Q-фильтры)*
+- [x] Реализовать `MacDentClient` (на тестовом токене)
+- [x] `import_excel` management command — импорт исторических данных 2025-2026
+- [ ] Заполнить `macdent_id` для каждого врача *(ждёт боевой токен)*
 
-### Фаза 2 — Синхронизация (1 неделя)
-- [ ] `FinanceSyncService.sync_period()` + тесты
+### Фаза 2 — Синхронизация ⚠️ Частично
+- [x] `FinanceSyncService.sync_period()` (на тестовом токене)
 - [ ] Подключить Redis + Celery в Docker Compose
 - [ ] Celery задачи: почасовая синхронизация + ежемесячный ФОТ
-- [ ] API endpoints: summary, pnl, balances, doctors
+- [x] API endpoints: summary, balances, daily, expenses
+- [ ] API endpoints: pnl (по уровням), doctors, payroll
 
-### Фаза 3 — Frontend просмотр (1 неделя)
-- [ ] KPICards + RevenueExpenseChart
-- [ ] DailyBalanceChart + MonthlyBalanceStack
+### Фаза 3 — Frontend просмотр ✅
+- [x] KPICards (4 карточки: выручка / расходы / прибыль / остаток)
+- [x] RevenueExpenseChart (бар-чарт по месяцам, чистый CSS без библиотек)
+- [x] DailyBalance sparklines (на карточках счетов)
 - [ ] DoctorsTab с KPI прогресс-барами
 
-### Фаза 4 — ФОТ и подтверждение (1 неделя)
+### Фаза 4 — ФОТ и подтверждение 🔲
 - [ ] PayrollTab + DoctorPayrollCard
 - [ ] `payroll/<id>/confirm/` endpoint
 - [ ] Уведомление owner когда ФОТ готов к подтверждению
 
-### Фаза 5 — Ежедневный ввод (1 неделя)
-- [ ] DailyInputTab — замена Excel листа
-- [ ] Автокатегоризация при вводе комментария
-- [ ] Автосчёт остатков на конец дня
+### Фаза 5 — Ежедневный ввод ✅
+- [x] DailyInputTab — production-grade форма с offline-очередью,
+      collapse секций, autocomplete по комментариям
+- [x] Автосчёт остатков на конец дня (live, через `useMemo`)
+- [x] Закрытие/переоткрытие дня (`is_closed` + `closed_by` + `closed_at`)
+- [ ] Автокатегоризация при вводе комментария *(пока ручной выбор)*
 
 ---
 

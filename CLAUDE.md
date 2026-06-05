@@ -253,24 +253,119 @@ docker-compose exec backend python manage.py collectstatic --noinput
 
 | Модуль | Статус |
 |---|---|
-| Планировщик расписания (React) | ✅ Готов (JSX v2) |
-| Django проект | 🔲 Создать |
-| Модели staff + schedule | 🔲 Создать |
-| REST API | 🔲 Создать |
-| Подключить React к API | 🔲 Создать |
-| Docker + nginx | 🔲 Создать |
-| Деплой на хостинг | 🔲 Ожидает |
-| Авторизация | 🔲 Создать |
-| Finance модуль | 🔲 Создать |
+| Планировщик расписания (React) | ✅ Готов (подключён к API) |
+| Django проект | ✅ Готов |
+| Модели staff + schedule | ✅ Готовы |
+| REST API | ✅ Готов |
+| Подключить React к API | ✅ Готов |
+| Docker + nginx | ✅ Готов |
+| Деплой на хостинг (91.243.71.139:8090) | ✅ Работает |
+| Авторизация (JWT + роли) | ✅ Готов |
+| Настройки доступа к вкладкам (RoleTabAccess) | ✅ Готов |
+| Finance модуль (модели + API + Dashboard) | ✅ Готов |
+| Импорт исторических данных из Excel | ✅ Готов (470 дней, ~10k транзакций) |
+| Дневной ввод (DailyInputTab) + закрытие дня | ✅ Готов |
+| MacDent API клиент | ⚠️ Готов на тестовом токене; ждём боевой |
+| Celery + Redis (автосинхронизация) | 🔲 Не подключено |
+| Расчёт ФОТ (PayrollCalculation UI) | 🔲 В работе |
 | Пациенты / CRM | 📋 Бэклог |
-| Аналитика / дашборд | 📋 Бэклог |
+| Аналитика по врачам / KPI прогресс | 📋 Бэклог |
+
+---
+
+## Реализовано
+
+### Backend (Django 5 + DRF + JWT)
+
+**`apps/accounts`** — `User`, `Clinic`, `ClinicMembership`, `RoleTabAccess`.
+Роли: owner / admin / doctor / anesthesiologist / receptionist.
+Матрица «роль → вкладки» хранится в БД (`RoleTabAccess`) с кэшем через
+`functools.lru_cache` и инвалидацией по `post_save`. Команда
+`init_permissions` сидит дефолты из хардкода.
+
+**`apps/staff`** — `StaffMember` (с полями `macdent_id`, `kpi_threshold`,
+`rate_below_kpi`, `rate_above_kpi`) + `SalaryRule`. Чистая функция расчёта
+ФОТ в `staff/salary.py` с pytest.
+
+**`apps/schedule`** — `Room`, `WeekTemplate`, `DaySlot`, `HourSlot`,
+`SchedulerState` (JSON-снапшот). Используется планировщиком расписания.
+
+**`apps/finance`** — все 7 моделей из архитектуры:
+`MacDentSync`, `DoctorRevenue`, `PayrollCalculation`, `TransactionCategory`,
+`DailyReport`, `DailyTransaction`, `DailyBalance`. У `DailyReport` есть
+`source_file`, `is_closed`, `closed_by`, `closed_at`.
+
+**MacDent клиент** в `apps/finance/services/macdent.py` —
+HTTP POST к `api-developer.macdent.kz`, токен полной строкой (`1196:1:xxx`).
+Endpoints: payments / rashodi / zapis / doctors / rasp / payment-detail.
+Управляющие команды: `sync_macdent`, `macdent_debug`.
+
+**Excel импорт** — `import_excel`: парсит листы вида «Расчеты 02.06.26 »
+из квартальных xlsx-файлов. Поддерживает диапазоны (`30-31.05.26`,
+`28.04-01.05.26`) → берёт ПОСЛЕДНЮЮ дату. Считает `balance_end` из
+транзакций (start + income − expense). Флаг `--reparse-ranges` для
+переразбора диапазонных листов.
+
+**API** (`api/v1/`):
+- `auth/login` `auth/refresh` `auth/me`
+- `staff/` (CRUD), `scheduler/state/` (GET/PUT)
+- `settings/tabs/`, `settings/permissions/` (GET/PUT owner-only)
+- `finance/summary/?from=&to=` (помесячно)
+- `finance/daily/?from=&to=`
+- `finance/expenses/?from=&to=` (по категориям)
+- `finance/balances/?from=&to=`
+- `finance/daily-report/?date=` (GET/POST upsert)
+- `finance/daily-report/close/` `reopen/` `closed-dates/?month=`
+
+### Frontend (React 18 + Vite + TypeScript)
+
+**Страницы:**
+- `LoginPage` — JWT логин
+- `ClinicScheduler` — планировщик (4 вкладки: расписание / по дням /
+  кабинеты / P&L), подключён к API
+- `FinancePage` — дашборд (KPI + бар-чарт + расходы + DailyInputTab)
+- `SettingsPage` — матрица доступа ролей (owner-only)
+
+**`DailyInputTab`** — production-grade форма дневного ввода:
+- date navigator с 🔒 для закрытых дней
+- 3 секции счетов (Kaspi pay / Halyk bank / Наличные), Income/Expense
+  toggle, autocomplete по комментариям из localStorage
+- closing balances считаются live
+- закрытие/переоткрытие дня (owner-only)
+- offline-очередь сохранения, optimistic UI, toast-уведомления
+
+### Авторизация и роли
+
+JWT через `simple-jwt` + `RoleTabAccess` → каждая роль видит только
+разрешённые вкладки (`/api/v1/auth/me/` возвращает `tabs: string[]`).
+`is_closed` день — read-only для всех, переоткрыть может только owner.
+
+### Деплой
+
+Docker Compose на VPS `91.243.71.139:8090`: gunicorn + nginx + Postgres 15.
+Конфиги: `backend/config/settings/{base,local,production}.py`.
 
 ---
 
 ## Следующий шаг
 
 ```
-Задача: создать Django проект с приложениями staff и schedule,
-        базовыми моделями и DRF endpoints для списка сотрудников.
-Файлы: backend/config/, backend/apps/staff/, backend/apps/schedule/
+Приоритеты (по убыванию):
+
+1. Получить боевой MACDENT_API_TOKEN от клиники → проверить sync_macdent
+   на реальных данных, заполнить macdent_id для всех врачей.
+
+2. Подключить Celery + Redis в docker-compose:
+   - почасовая задача sync_macdent_today
+   - ежемесячная calculate_monthly_payroll
+
+3. UI ФОТ:
+   - PayrollTab в FinancePage
+   - DoctorPayrollCard с KPI-прогрессом
+   - confirm-кнопка для owner
+
+4. Аналитика по врачам:
+   - стек оборотов по врачам
+   - выручка/час
+   - сравнение периодов
 ```
