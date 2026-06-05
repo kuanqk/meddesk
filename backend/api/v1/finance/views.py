@@ -322,7 +322,7 @@ def _build_report_response(report_date: date) -> dict:
                 "row_order": t.row_order,
             }
             for t in sorted(
-                report.transactions.filter(source="manual"),
+                report.transactions.all(),
                 key=lambda t: (t.account, t.row_order),
             )
         ]
