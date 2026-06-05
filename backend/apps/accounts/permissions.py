@@ -4,8 +4,9 @@ TAB_SCHEDULE = "schedule"
 TAB_PL = "pl"
 TAB_WEEK = "week"
 TAB_ROOMS = "rooms"
+TAB_FINANCE = "finance"
 
-ALL_TABS = (TAB_SCHEDULE, TAB_PL, TAB_WEEK, TAB_ROOMS)
+ALL_TABS = (TAB_SCHEDULE, TAB_PL, TAB_WEEK, TAB_ROOMS, TAB_FINANCE)
 
 TAB_ACCESS: dict[str, tuple[str, ...]] = {
     "owner": ALL_TABS,

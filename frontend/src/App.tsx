@@ -7,7 +7,7 @@ import FinancePage from "./pages/FinancePage";
 type Page = "scheduler" | "finance";
 
 function AppContent() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, allowedTabs } = useAuth();
   const [page, setPage] = useState<Page>("scheduler");
 
   if (isLoading) {
@@ -22,12 +22,14 @@ function AppContent() {
     return <LoginPage />;
   }
 
-  if (page === "finance") {
+  const canViewFinance = allowedTabs.includes("finance");
+
+  if (page === "finance" && canViewFinance) {
     return <FinancePage onBack={() => setPage("scheduler")} />;
   }
 
   return (
-    <ClinicScheduler onNavigateFinance={() => setPage("finance")} />
+    <ClinicScheduler onNavigateFinance={canViewFinance ? () => setPage("finance") : undefined} />
   );
 }
 
