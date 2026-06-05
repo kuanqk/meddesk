@@ -5,7 +5,7 @@ export type UserRole =
   | "anesthesiologist"
   | "receptionist";
 
-export type TabId = "schedule" | "pl" | "week" | "rooms";
+export type TabId = "schedule" | "pl" | "week" | "rooms" | "finance";
 
 export interface AuthUser {
   id: number;
