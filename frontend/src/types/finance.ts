@@ -54,6 +54,8 @@ export interface DailyReportResponse {
   date: string;
   exists: boolean;
   is_closed: boolean;
+  closed_by: string | null;
+  closed_at: string | null;
   notes: string;
   transactions: ReportTransaction[];
   opening_balances: ReportOpeningBalances;

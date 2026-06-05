@@ -16,13 +16,20 @@ import {
   type KeyboardEvent,
   type RefCallback,
 } from "react";
-import { fetchDailyReport, saveDailyReport } from "../../api/finance";
+import {
+  closeDailyReport,
+  fetchClosedDates,
+  fetchDailyReport,
+  reopenDailyReport,
+  saveDailyReport,
+} from "../../api/finance";
 import type {
   AccountSlug,
   DailyReportSavePayload,
   Direction,
   ReportOpeningBalances,
 } from "../../types/finance";
+import { useAuth } from "../../context/AuthContext";
 
 // ── design tokens ─────────────────────────────────────────────────────────────
 const C = {
@@ -580,6 +587,8 @@ export interface DailyInputTabProps {
 // ── Main component ────────────────────────────────────────────────────────────
 export default function DailyInputTab({ initialDate }: DailyInputTabProps) {
   const isMobile = useIsMobile();
+  const { user } = useAuth();
+  const isOwner = !!(user?.is_superuser || user?.role === "owner");
 
   // ── date ──────────────────────────────────────────────────────────────────
   const [date, setDate] = useState(initialDate ?? todayStr());
@@ -589,15 +598,19 @@ export default function DailyInputTab({ initialDate }: DailyInputTabProps) {
   const [opening, setOpening] = useState<ReportOpeningBalances>({ kaspi_pay: "0", halyk: "0", cash: "0" });
   const [notes, setNotes] = useState("");
   const [isClosed, setIsClosed] = useState(false);
+  const [closedBy, setClosedBy] = useState<string | null>(null);
+  const [closedAt, setClosedAt] = useState<string | null>(null);
 
   // ── UI state ───────────────────────────────────────────────────────────────
   const [collapsed, setCollapsed] = useState<Set<AccountSlug>>(new Set());
   const [isDirty, setIsDirty] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [pendingSavePayload, setPendingSavePayload] = useState<DailyReportSavePayload | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [closedDates, setClosedDates] = useState<Set<string>>(new Set());
 
   // ── refs ───────────────────────────────────────────────────────────────────
   const amountRefs  = useRef<Map<string, HTMLInputElement>>(new Map());
@@ -639,6 +652,8 @@ export default function DailyInputTab({ initialDate }: DailyInputTabProps) {
       setOpening(data.opening_balances);
       setNotes(data.notes);
       setIsClosed(data.is_closed);
+      setClosedBy(data.closed_by);
+      setClosedAt(data.closed_at);
 
       const newRows = emptyRows();
       for (const tx of data.transactions) {
@@ -756,6 +771,8 @@ export default function DailyInputTab({ initialDate }: DailyInputTabProps) {
       // Sync state from server response
       setOpening(data.opening_balances);
       setIsClosed(data.is_closed);
+      setClosedBy(data.closed_by);
+      setClosedAt(data.closed_at);
       setIsDirty(false);
       toast("Сохранено ✓", "success");
     } catch {
@@ -776,6 +793,57 @@ export default function DailyInputTab({ initialDate }: DailyInputTabProps) {
     }
     doSave(payload);
   };
+
+  // ── close / reopen ─────────────────────────────────────────────────────────
+  const handleClose = async () => {
+    if (isDirty) {
+      toast("Сначала сохраните изменения перед закрытием дня", "error");
+      return;
+    }
+    if (!confirm(`Закрыть день ${date}? Данные будут зафиксированы и не подлежат изменению (кроме переоткрытия владельцем).`)) return;
+    setIsClosing(true);
+    try {
+      const data = await closeDailyReport(date);
+      setIsClosed(data.is_closed);
+      setClosedBy(data.closed_by);
+      setClosedAt(data.closed_at);
+      setClosedDates(prev => new Set(prev).add(date));
+      toast("День закрыт ✓", "success");
+    } catch {
+      toast("Не удалось закрыть день", "error");
+    } finally {
+      setIsClosing(false);
+    }
+  };
+
+  const handleReopen = async () => {
+    if (!confirm(`Переоткрыть день ${date}? Данные снова станут редактируемыми.`)) return;
+    setIsClosing(true);
+    try {
+      const data = await reopenDailyReport(date);
+      setIsClosed(data.is_closed);
+      setClosedBy(data.closed_by);
+      setClosedAt(data.closed_at);
+      setClosedDates(prev => {
+        const next = new Set(prev);
+        next.delete(date);
+        return next;
+      });
+      toast("День переоткрыт ✓", "success");
+    } catch {
+      toast("Не удалось переоткрыть день", "error");
+    } finally {
+      setIsClosing(false);
+    }
+  };
+
+  // ── load closed dates for the current month ───────────────────────────────
+  useEffect(() => {
+    const month = date.slice(0, 7); // "YYYY-MM"
+    fetchClosedDates(month)
+      .then(dates => setClosedDates(new Set(dates)))
+      .catch(() => { /* silent */ });
+  }, [date.slice(0, 7)]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── validation ─────────────────────────────────────────────────────────────
   const validationErrors = useMemo(() => {
@@ -801,7 +869,23 @@ export default function DailyInputTab({ initialDate }: DailyInputTabProps) {
 
   const closingValues: Record<AccountSlug, number | null> = closing;
 
-  const disabled = isLoading || isSaving || isClosed;
+  // Owner can always reopen, but day is read-only while is_closed is true.
+  // Editing requires either an open day OR no day at all.
+  const canEdit = !isClosed;
+  const disabled = isLoading || isSaving || isClosing || !canEdit;
+
+  // Format closed_at timestamp for display
+  const closedAtLabel = useMemo(() => {
+    if (!closedAt) return "";
+    try {
+      return new Date(closedAt).toLocaleString("ru-RU", {
+        day: "2-digit", month: "2-digit", year: "numeric",
+        hour: "2-digit", minute: "2-digit",
+      });
+    } catch {
+      return closedAt;
+    }
+  }, [closedAt]);
 
   // ── render ─────────────────────────────────────────────────────────────────
   return (
@@ -841,16 +925,21 @@ export default function DailyInputTab({ initialDate }: DailyInputTabProps) {
         >←</button>
 
         <div style={{ flex: 1, textAlign: "center" }}>
-          <input
-            type="date"
-            value={date}
-            aria-label="Выбрать дату"
-            onChange={e => {
-              if (isDirty && !confirm("Есть несохранённые изменения. Перейти без сохранения?")) return;
-              setDate(e.target.value);
-            }}
-            style={{ border: "none", background: "transparent", fontSize: 14, fontWeight: 700, color: C.text, fontFamily: "inherit", cursor: "pointer", outline: "none" }}
-          />
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="date"
+              value={date}
+              aria-label="Выбрать дату"
+              onChange={e => {
+                if (isDirty && !confirm("Есть несохранённые изменения. Перейти без сохранения?")) return;
+                setDate(e.target.value);
+              }}
+              style={{ border: "none", background: "transparent", fontSize: 14, fontWeight: 700, color: C.text, fontFamily: "inherit", cursor: "pointer", outline: "none" }}
+            />
+            {closedDates.has(date) && (
+              <span title="День закрыт" aria-label="День закрыт" style={{ fontSize: 14 }}>🔒</span>
+            )}
+          </div>
           <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{formatDateLabel(date)}</div>
         </div>
 
@@ -884,6 +973,56 @@ export default function DailyInputTab({ initialDate }: DailyInputTabProps) {
           )}
         </div>
       </div>
+
+      {/* ── Closed banner ── */}
+      {isClosed && (
+        <div
+          role="status"
+          style={{
+            background: C.greenBg,
+            border: "1px solid #bbf7d0",
+            borderRadius: 10,
+            padding: "10px 16px",
+            marginBottom: 12,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            color: C.green,
+          }}
+        >
+          <span style={{ fontSize: 18 }}>🔒</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>День закрыт</div>
+            <div style={{ fontSize: 11, color: C.textSub, marginTop: 2 }}>
+              {closedBy && <>Закрыл: <strong>{closedBy}</strong></>}
+              {closedBy && closedAt && " · "}
+              {closedAt && <>{closedAtLabel}</>}
+            </div>
+          </div>
+          {isOwner && (
+            <button
+              type="button"
+              onClick={handleReopen}
+              disabled={isClosing}
+              aria-label="Переоткрыть день"
+              style={{
+                background: "#fff",
+                border: `1px solid ${C.green}`,
+                borderRadius: 8,
+                padding: "7px 14px",
+                fontSize: 12,
+                fontWeight: 700,
+                color: C.green,
+                cursor: isClosing ? "not-allowed" : "pointer",
+                fontFamily: "inherit",
+                opacity: isClosing ? 0.7 : 1,
+              }}
+            >
+              {isClosing ? "..." : "🔓 Переоткрыть день"}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── Opening balances ── */}
       <BalancesRow
@@ -985,40 +1124,61 @@ export default function DailyInputTab({ initialDate }: DailyInputTabProps) {
         />
       </div>
 
-      {/* ── Save bar ── */}
-      <div style={{
-        position: isMobile ? "fixed" : "static",
-        bottom: isMobile ? 0 : "auto",
-        left: isMobile ? 0 : "auto",
-        right: isMobile ? 0 : "auto",
-        padding: isMobile ? "12px 16px" : "0",
-        background: isMobile ? C.surface : "transparent",
-        borderTop: isMobile ? `1px solid ${C.border}` : "none",
-        zIndex: isMobile ? 100 : "auto",
-        display: "flex", alignItems: "center", gap: 12,
-      }}>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={isSaving || isClosed || !isDirty || validationErrors.length > 0}
-          aria-label="Сохранить отчёт за день"
-          style={{
-            flex: isMobile ? 1 : "none",
-            background: isDirty && !isClosed ? C.accent : C.bg,
-            color: isDirty && !isClosed ? "#fff" : C.textMuted,
-            border: `1.5px solid ${isDirty && !isClosed ? C.accent : C.border2}`,
-            borderRadius: 8, padding: "10px 28px",
-            fontSize: 13, fontWeight: 700, cursor: (isSaving || isClosed || !isDirty) ? "not-allowed" : "pointer",
-            fontFamily: "inherit", opacity: (isSaving || !isDirty) ? 0.65 : 1, transition: "all 0.15s",
-          }}
-        >
-          {isSaving ? "Сохранение…" : isClosed ? "День закрыт" : "Сохранить"}
-        </button>
+      {/* ── Save bar ── (hidden when day is closed) */}
+      {!isClosed && (
+        <div style={{
+          position: isMobile ? "fixed" : "static",
+          bottom: isMobile ? 0 : "auto",
+          left: isMobile ? 0 : "auto",
+          right: isMobile ? 0 : "auto",
+          padding: isMobile ? "12px 16px" : "0",
+          background: isMobile ? C.surface : "transparent",
+          borderTop: isMobile ? `1px solid ${C.border}` : "none",
+          zIndex: isMobile ? 100 : "auto",
+          display: "flex", alignItems: "center", gap: 12,
+        }}>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={isSaving || !isDirty || validationErrors.length > 0}
+            aria-label="Сохранить отчёт за день"
+            style={{
+              flex: isMobile ? 1 : "none",
+              background: isDirty ? C.accent : C.bg,
+              color: isDirty ? "#fff" : C.textMuted,
+              border: `1.5px solid ${isDirty ? C.accent : C.border2}`,
+              borderRadius: 8, padding: "10px 28px",
+              fontSize: 13, fontWeight: 700, cursor: (isSaving || !isDirty) ? "not-allowed" : "pointer",
+              fontFamily: "inherit", opacity: (isSaving || !isDirty) ? 0.65 : 1, transition: "all 0.15s",
+            }}
+          >
+            {isSaving ? "Сохранение…" : "Сохранить"}
+          </button>
 
-        {isClosed && (
-          <span style={{ fontSize: 12, color: C.red }}>Отчёт закрыт и защищён от изменений.</span>
-        )}
-      </div>
+          {isOwner && (
+            <button
+              type="button"
+              onClick={handleClose}
+              disabled={isClosing || isSaving || isDirty}
+              aria-label="Закрыть день"
+              title={isDirty ? "Сначала сохраните изменения" : "Закрыть день — данные будут зафиксированы"}
+              style={{
+                background: "#fff",
+                color: C.red,
+                border: `1.5px solid ${C.red}`,
+                borderRadius: 8, padding: "10px 20px",
+                fontSize: 13, fontWeight: 700,
+                cursor: (isClosing || isSaving || isDirty) ? "not-allowed" : "pointer",
+                fontFamily: "inherit",
+                opacity: (isClosing || isDirty) ? 0.5 : 1,
+                transition: "all 0.15s",
+              }}
+            >
+              {isClosing ? "..." : "🔒 Закрыть день"}
+            </button>
+          )}
+        </div>
+      )}
 
       {isMobile && <div style={{ height: 64 }} />}
     </div>

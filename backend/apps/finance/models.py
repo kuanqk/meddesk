@@ -196,6 +196,15 @@ class DailyReport(models.Model):
         default=False,
         help_text="Закрытый день — нельзя редактировать",
     )
+    closed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="closed_daily_reports",
+        verbose_name="Закрыл",
+    )
+    closed_at = models.DateTimeField("Дата закрытия", null=True, blank=True)
     source_file = models.CharField(
         "Исходный файл",
         max_length=255,

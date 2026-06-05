@@ -5,6 +5,7 @@ from decimal import Decimal
 from django.db import transaction as db_transaction
 from django.db.models import Q, Sum
 from django.db.models.functions import TruncMonth
+from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -329,6 +330,8 @@ def _build_report_response(report_date: date) -> dict:
             "date":             str(report_date),
             "exists":           True,
             "is_closed":        report.is_closed,
+            "closed_by":        report.closed_by.username if report.closed_by else None,
+            "closed_at":        report.closed_at.isoformat() if report.closed_at else None,
             "notes":            report.notes,
             "transactions":     transactions,
             "opening_balances": opening,
@@ -353,10 +356,21 @@ def _build_report_response(report_date: date) -> dict:
             "date":             str(report_date),
             "exists":           False,
             "is_closed":        False,
+            "closed_by":        None,
+            "closed_at":        None,
             "notes":            "",
             "transactions":     [],
             "opening_balances": opening,
         }
+
+
+def _is_owner(user) -> bool:
+    if user.is_superuser:
+        return True
+    from apps.accounts.models import ClinicMembership
+    return ClinicMembership.objects.filter(
+        user=user, role=ClinicMembership.Role.OWNER, is_active=True
+    ).exists()
 
 
 class DailyReportView(APIView):
@@ -437,3 +451,93 @@ class DailyReportView(APIView):
                 )
 
         return Response(_build_report_response(report_date))
+
+
+# ── Close / Reopen / Closed dates ─────────────────────────────────────────────
+
+class DailyReportCloseView(APIView):
+    """POST /api/v1/finance/daily-report/close/ — owner only."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not _is_owner(request.user):
+            return Response({"error": "Только владелец может закрывать дни."}, status=403)
+
+        date_str = request.data.get("date")
+        if not date_str:
+            return Response({"error": "date required"}, status=400)
+        try:
+            report_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return Response({"error": "Invalid date format. Use YYYY-MM-DD"}, status=400)
+
+        try:
+            report = DailyReport.objects.get(date=report_date)
+        except DailyReport.DoesNotExist:
+            return Response({"error": "Отчёт за этот день не найден."}, status=404)
+
+        report.is_closed = True
+        report.closed_by = request.user
+        report.closed_at = timezone.now()
+        report.save(update_fields=["is_closed", "closed_by", "closed_at", "updated_at"])
+
+        return Response(_build_report_response(report_date))
+
+
+class DailyReportReopenView(APIView):
+    """POST /api/v1/finance/daily-report/reopen/ — owner only."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not _is_owner(request.user):
+            return Response({"error": "Только владелец может переоткрывать дни."}, status=403)
+
+        date_str = request.data.get("date")
+        if not date_str:
+            return Response({"error": "date required"}, status=400)
+        try:
+            report_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return Response({"error": "Invalid date format. Use YYYY-MM-DD"}, status=400)
+
+        try:
+            report = DailyReport.objects.get(date=report_date)
+        except DailyReport.DoesNotExist:
+            return Response({"error": "Отчёт за этот день не найден."}, status=404)
+
+        report.is_closed = False
+        report.closed_by = None
+        report.closed_at = None
+        report.save(update_fields=["is_closed", "closed_by", "closed_at", "updated_at"])
+
+        return Response(_build_report_response(report_date))
+
+
+class DailyReportClosedDatesView(APIView):
+    """
+    GET /api/v1/finance/daily-report/closed-dates/?month=YYYY-MM
+    → list of closed-day date strings in that month.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        month_str = request.query_params.get("month")
+        if not month_str:
+            return Response({"error": "month parameter required"}, status=400)
+        try:
+            month_start = datetime.strptime(month_str, "%Y-%m").date().replace(day=1)
+        except ValueError:
+            return Response({"error": "Invalid month format. Use YYYY-MM"}, status=400)
+
+        month_end = _month_end(month_start)
+
+        dates = (
+            DailyReport.objects
+            .filter(date__range=[month_start, month_end], is_closed=True)
+            .values_list("date", flat=True)
+            .order_by("date")
+        )
+        return Response([d.isoformat() for d in dates])

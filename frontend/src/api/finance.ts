@@ -49,3 +49,20 @@ export async function saveDailyReport(
   const { data } = await api.post<DailyReportResponse>("/finance/daily-report/", payload);
   return data;
 }
+
+export async function closeDailyReport(date: string): Promise<DailyReportResponse> {
+  const { data } = await api.post<DailyReportResponse>("/finance/daily-report/close/", { date });
+  return data;
+}
+
+export async function reopenDailyReport(date: string): Promise<DailyReportResponse> {
+  const { data } = await api.post<DailyReportResponse>("/finance/daily-report/reopen/", { date });
+  return data;
+}
+
+export async function fetchClosedDates(month: string): Promise<string[]> {
+  const { data } = await api.get<string[]>("/finance/daily-report/closed-dates/", {
+    params: { month },
+  });
+  return data;
+}
