@@ -19,9 +19,9 @@ const PALETTE = [
 
 const TAB_ITEMS = [
   { id: "schedule", label: "📅 Расписание" },
-  { id: "pl", label: "💰 P&L" },
   { id: "week", label: "📆 По дням" },
   { id: "rooms", label: "🏥 Кабинеты" },
+  { id: "pl", label: "💰 P&L" },
 ];
 
 const INITIAL_DOCTORS = [
