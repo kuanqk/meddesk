@@ -3,11 +3,12 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import ClinicScheduler from "./components/scheduler/ClinicScheduler";
 import LoginPage from "./pages/LoginPage";
 import FinancePage from "./pages/FinancePage";
+import SettingsPage from "./pages/SettingsPage";
 
-type Page = "scheduler" | "finance";
+type Page = "scheduler" | "finance" | "settings";
 
 function AppContent() {
-  const { isAuthenticated, isLoading, allowedTabs } = useAuth();
+  const { isAuthenticated, isLoading, allowedTabs, user } = useAuth();
   const [page, setPage] = useState<Page>("scheduler");
 
   if (isLoading) {
@@ -22,14 +23,28 @@ function AppContent() {
     return <LoginPage />;
   }
 
-  const canViewFinance = allowedTabs.includes("finance");
+  const canViewFinance  = allowedTabs.includes("finance");
+  const canViewSettings = user?.is_superuser || user?.role === "owner";
 
   if (page === "finance" && canViewFinance) {
-    return <FinancePage onBack={() => setPage("scheduler")} />;
+    return (
+      <FinancePage
+        onBack={() => setPage("scheduler")}
+      />
+    );
+  }
+
+  if (page === "settings" && canViewSettings) {
+    return (
+      <SettingsPage onBack={() => setPage("scheduler")} />
+    );
   }
 
   return (
-    <ClinicScheduler onNavigateFinance={canViewFinance ? () => setPage("finance") : undefined} />
+    <ClinicScheduler
+      onNavigateFinance={canViewFinance   ? () => setPage("finance")  : undefined}
+      onNavigateSettings={canViewSettings ? () => setPage("settings") : undefined}
+    />
   );
 }
 

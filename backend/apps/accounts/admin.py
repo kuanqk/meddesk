@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import Clinic, ClinicMembership, User
+from .models import Clinic, ClinicMembership, RoleTabAccess, User
 
 
 @admin.register(User)
@@ -21,3 +21,8 @@ class ClinicAdmin(admin.ModelAdmin):
 class ClinicMembershipAdmin(admin.ModelAdmin):
     list_display = ("user", "clinic", "role", "is_active")
     list_filter = ("role", "is_active", "clinic")
+
+
+@admin.register(RoleTabAccess)
+class RoleTabAccessAdmin(admin.ModelAdmin):
+    list_display = ("role", "tabs")

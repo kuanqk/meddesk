@@ -14,6 +14,7 @@ urlpatterns = [
     path("auth/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("auth/me/", MeView.as_view(), name="auth-me"),
     path("scheduler/state/", SchedulerStateView.as_view(), name="scheduler-state"),
-    path("finance/", include("api.v1.finance.urls")),
+    path("finance/",  include("api.v1.finance.urls")),
+    path("settings/", include("api.v1.settings.urls")),
     path("", include(router.urls)),
 ]

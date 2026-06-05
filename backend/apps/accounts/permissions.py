@@ -1,4 +1,15 @@
-"""Role-based tab access. Extend TAB_ACCESS when adding new sections."""
+"""
+Role-based tab access.
+
+Tabs are stored in DB (RoleTabAccess). The hardcoded TAB_ACCESS dict is used
+as a fallback when no DB record exists for a role, and as the seed for
+the init_permissions management command.
+
+Add new tabs to ALL_AVAILABLE_TABS — they automatically appear in the
+settings UI without any frontend changes.
+"""
+
+from functools import lru_cache
 
 TAB_SCHEDULE = "schedule"
 TAB_PL = "pl"
@@ -8,20 +19,56 @@ TAB_FINANCE = "finance"
 
 ALL_TABS = (TAB_SCHEDULE, TAB_PL, TAB_WEEK, TAB_ROOMS, TAB_FINANCE)
 
+# Shown in the settings UI — order matters (left-to-right columns)
+ALL_AVAILABLE_TABS = [
+    {"id": TAB_SCHEDULE, "label": "📅 Расписание"},
+    {"id": TAB_PL,       "label": "💰 P&L"},
+    {"id": TAB_WEEK,     "label": "📆 По дням"},
+    {"id": TAB_ROOMS,    "label": "🏥 Кабинеты"},
+    {"id": TAB_FINANCE,  "label": "📊 Финансы"},
+]
+
+# Hardcoded defaults — used as fallback and seed
 TAB_ACCESS: dict[str, tuple[str, ...]] = {
-    "owner": ALL_TABS,
-    "admin": ALL_TABS,
-    "doctor": (TAB_SCHEDULE, TAB_WEEK),
-    "anesthesiologist": (TAB_SCHEDULE, TAB_WEEK),
-    "receptionist": (TAB_SCHEDULE, TAB_WEEK, TAB_ROOMS),
+    "owner":             ALL_TABS,
+    "admin":             (TAB_SCHEDULE, TAB_PL, TAB_WEEK, TAB_ROOMS),
+    "doctor":            (TAB_SCHEDULE, TAB_WEEK),
+    "anesthesiologist":  (TAB_SCHEDULE, TAB_WEEK),
+    "receptionist":      (TAB_SCHEDULE, TAB_WEEK, TAB_ROOMS),
 }
 
 DEFAULT_TABS = (TAB_SCHEDULE,)
 
 
+@lru_cache(maxsize=32)
+def _db_tabs_for_role(role: str) -> list[str] | None:
+    """
+    Returns the tab list from DB, or None if no record exists.
+    Result is cached per role; cache is cleared by a post_save signal
+    on RoleTabAccess (wired up in AccountsConfig.ready).
+    """
+    # Late import to avoid Django "apps not ready" errors at module load time.
+    from apps.accounts.models import RoleTabAccess  # noqa: PLC0415
+    try:
+        return list(RoleTabAccess.objects.get(role=role).tabs)
+    except RoleTabAccess.DoesNotExist:
+        return None
+
+
 def tabs_for_role(role: str | None, *, is_superuser: bool = False) -> list[str]:
     if is_superuser:
         return list(ALL_TABS)
-    if role and role in TAB_ACCESS:
-        return list(TAB_ACCESS[role])
-    return list(DEFAULT_TABS)
+    if not role:
+        return list(DEFAULT_TABS)
+
+    # 1. DB overrides
+    try:
+        db_tabs = _db_tabs_for_role(role)
+        if db_tabs is not None:
+            return db_tabs
+    except Exception:
+        # If DB isn't available (e.g. tests without migrations), fall through
+        pass
+
+    # 2. Hardcoded fallback
+    return list(TAB_ACCESS.get(role, DEFAULT_TABS))

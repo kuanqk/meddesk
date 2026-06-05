@@ -265,7 +265,7 @@ function PersonModal({ person, allPeople, onSave, onClose, C }) {
 }
 
 /* ─── MAIN COMPONENT ─────────────────────────────────────────── */
-export default function ClinicScheduler({ onNavigateFinance }: { onNavigateFinance?: () => void }) {
+export default function ClinicScheduler({ onNavigateFinance, onNavigateSettings }: { onNavigateFinance?: () => void; onNavigateSettings?: () => void }) {
   const { user, allowedTabs, logout } = useAuth();
   const visibleTabs = TAB_ITEMS.filter((t) => allowedTabs.includes(t.id));
 
@@ -538,6 +538,18 @@ export default function ClinicScheduler({ onNavigateFinance }: { onNavigateFinan
                 }}
               >
                 💰 Финансы
+              </button>
+            )}
+            {onNavigateSettings && (
+              <button
+                onClick={onNavigateSettings}
+                style={{
+                  background:"#fff", border:`1px solid ${C.border2}`, borderRadius:8,
+                  padding:"7px 14px", fontSize:12, fontWeight:600, color:C.textSub,
+                  cursor:"pointer", fontFamily:"inherit",
+                }}
+              >
+                ⚙️ Настройки
               </button>
             )}
             <button
