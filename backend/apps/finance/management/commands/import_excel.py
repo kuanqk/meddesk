@@ -4,6 +4,7 @@ Import historical DailyReport data from quarterly .xlsx cash-book files.
 File layout (openpyxl values_only=True, 0-indexed rows/columns):
   rows[0]  — header text ("Остаток за …")
   rows[1]  — opening balances: [1]=kaspi [2]=halyk [3]=cash [4]=usd
+             (4 columns side-by-side, NOT the same layout as transaction rows)
   rows[2]  — account labels
   rows[3]  — empty
   rows[4]  — column headers (skip)
@@ -43,11 +44,21 @@ except ImportError:
 from apps.finance.models import DailyBalance, DailyReport, DailyTransaction
 
 # ── column layout ──────────────────────────────────────────────────────────────
+# Transaction rows (rows[5+]):  3 accounts × {income, expense, comment} columns
 # (account_slug, income_col, expense_col, comment_col)
 ACCOUNT_COLS = [
     ("kaspi_pay", 1, 2, 3),
     ("halyk",     4, 5, 6),
     ("cash",      7, 8, 9),
+]
+
+# Opening-balance row (rows[1]):  4 accounts laid out side-by-side
+# (account_slug, col)
+OPENING_ACCOUNT_COLS = [
+    ("kaspi_pay", 1),
+    ("halyk",     2),
+    ("cash",      3),
+    ("usd",       4),
 ]
 
 # pos[5] value → account slug for end-balance section
@@ -184,16 +195,13 @@ def parse_sheet(ws) -> dict:
     }
 
     # ── opening balances (rows[1]) ─────────────────────────────────────────
+    # Layout: [1]=kaspi  [2]=halyk  [3]=cash  [4]=usd
     if len(rows) > 1:
         ob = rows[1]
-        for slug, inc_col, _exp_col, _cmt_col in ACCOUNT_COLS:
-            v = to_dec(ob[inc_col] if len(ob) > inc_col else None)
+        for slug, col in OPENING_ACCOUNT_COLS:
+            v = to_dec(ob[col] if len(ob) > col else None)
             if v is not None:
                 result["opening"][slug] = v
-        # USD is at pos[4]
-        usd = to_dec(ob[4] if len(ob) > 4 else None)
-        if usd is not None:
-            result["opening"]["usd"] = usd
 
     # ── transaction rows (rows[5..]) ───────────────────────────────────────
     row_order = 0
