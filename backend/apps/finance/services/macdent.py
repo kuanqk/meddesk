@@ -40,7 +40,7 @@ class MacDentClient:
             "date_from": date_from,
             "date_to": date_to,
         })
-        return data.get("payments", data.get("data", []))
+        return data.get("pays", data.get("data", []))
 
     def get_payment_detail(self, payment_id) -> dict:
         return self._post("payment", "get_detailed", {"id": payment_id})

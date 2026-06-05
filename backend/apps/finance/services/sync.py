@@ -51,9 +51,10 @@ class FinanceSyncService:
             raise
 
     def _save_revenues(self, payments: list) -> int:
+        from datetime import datetime
         saved = 0
         for p in payments:
-            doctor_id = p.get("doctor_id")
+            doctor_id = p.get("doctor")  # field is "doctor", not "doctor_id"
             if not doctor_id:
                 continue
             try:
@@ -62,13 +63,21 @@ class FinanceSyncService:
                 logger.warning("MacDent doctor_id=%s not matched to any StaffMember", doctor_id)
                 continue
 
+            # date comes as "DD.MM.YYYY"
+            raw_date = p.get("date", "")
+            try:
+                pay_date = datetime.strptime(raw_date, "%d.%m.%Y").date()
+            except ValueError:
+                logger.warning("Cannot parse date: %s", raw_date)
+                continue
+
             DoctorRevenue.objects.update_or_create(
                 doctor=staff,
-                date=p.get("date"),
+                date=pay_date,
                 defaults={
-                    "revenue": Decimal(str(p.get("amount", 0))),
-                    "patients_count": p.get("patients_count", 0),
-                    "hours_worked": Decimal(str(p.get("hours", 0))),
+                    "revenue": Decimal(str(p.get("summ", 0))),  # field is "summ"
+                    "patients_count": 1,
+                    "hours_worked": Decimal("0"),
                     "source": "macdent",
                     "raw_data": p,
                 },
