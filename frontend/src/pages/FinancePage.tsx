@@ -2,6 +2,9 @@ import { useEffect, useState, useMemo } from "react";
 import { fetchSummary, fetchExpenses, fetchBalances } from "../api/finance";
 import type { MonthlySummary, ExpenseCategory, DailyBalance } from "../types/finance";
 import { useAuth } from "../context/AuthContext";
+import DailyInputTab from "../components/finance/DailyInputTab";
+
+type FinanceTab = "overview" | "input";
 
 // ── design tokens (same as ClinicScheduler) ───────────────────────────────────
 const C = {
@@ -173,6 +176,7 @@ const PERIODS = [
 
 export default function FinancePage({ onBack }: { onBack: () => void }) {
   const { logout } = useAuth();
+  const [activeTab, setActiveTab] = useState<FinanceTab>("overview");
   const [period, setPeriod] = useState(6);
   const [summary, setSummary] = useState<MonthlySummary[]>([]);
   const [expenses, setExpenses] = useState<ExpenseCategory[]>([]);
@@ -273,9 +277,36 @@ export default function FinancePage({ onBack }: { onBack: () => void }) {
         </div>
       </div>
 
+      {/* ── TAB BAR ── */}
+      <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 24px", display: "flex", gap: 2 }}>
+        {([
+          { id: "overview", label: "📊 Обзор" },
+          { id: "input",    label: "📝 Ввод дня" },
+        ] as { id: FinanceTab; label: string }[]).map(t => (
+          <button
+            key={t.id}
+            onClick={() => setActiveTab(t.id)}
+            style={{
+              background: "transparent", border: "none",
+              borderBottom: activeTab === t.id ? `2px solid ${C.accent}` : "2px solid transparent",
+              color: activeTab === t.id ? C.accent : C.textSub,
+              padding: "10px 18px", cursor: "pointer", fontSize: 13,
+              fontFamily: "inherit", fontWeight: activeTab === t.id ? 600 : 400,
+              transition: "all 0.15s",
+            }}
+          >{t.label}</button>
+        ))}
+      </div>
+
       <div style={{ padding: 24 }}>
 
-        {/* ── PERIOD SELECTOR ── */}
+        {/* ── DAILY INPUT TAB ── */}
+        {activeTab === "input" && (
+          <DailyInputTab />
+        )}
+
+        {activeTab !== "input" && (
+          <>{/* ── PERIOD SELECTOR ── */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
           <span style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, letterSpacing: 1, textTransform: "uppercase", marginRight: 4 }}>
             Период:
@@ -474,6 +505,7 @@ export default function FinancePage({ onBack }: { onBack: () => void }) {
 
           </div>
         </div>
+        </>) /* end activeTab !== "input" */}
       </div>
     </div>
   );

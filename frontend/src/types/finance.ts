@@ -29,3 +29,39 @@ export interface DailyBalance {
   cash: string | null;
   total: string | null;
 }
+
+// ── DailyReport (input/output) ─────────────────────────────────────────────
+
+export type AccountSlug = "kaspi_pay" | "halyk" | "cash";
+export type Direction   = "income" | "expense";
+
+export interface ReportTransaction {
+  id?: number;
+  account: AccountSlug;
+  direction: Direction;
+  amount: string;
+  comment: string;
+  row_order: number;
+}
+
+export interface ReportOpeningBalances {
+  kaspi_pay: string;
+  halyk: string;
+  cash: string;
+}
+
+export interface DailyReportResponse {
+  date: string;
+  exists: boolean;
+  is_closed: boolean;
+  notes: string;
+  transactions: ReportTransaction[];
+  opening_balances: ReportOpeningBalances;
+}
+
+export interface DailyReportSavePayload {
+  date: string;
+  transactions: Omit<ReportTransaction, "id">[];
+  opening_balances: ReportOpeningBalances;
+  notes: string;
+}

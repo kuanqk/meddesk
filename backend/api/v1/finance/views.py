@@ -2,6 +2,7 @@ import calendar
 from datetime import date, datetime
 from decimal import Decimal
 
+from django.db import transaction as db_transaction
 from django.db.models import Q, Sum
 from django.db.models.functions import TruncMonth
 from rest_framework.permissions import IsAuthenticated
@@ -12,6 +13,7 @@ from apps.finance.models import DailyBalance, DailyReport, DailyTransaction
 
 from .serializers import (
     DailyBalanceSerializer,
+    DailyReportSaveSerializer,
     DailySummarySerializer,
     ExpenseCategorySerializer,
     MonthlySummarySerializer,
@@ -287,3 +289,151 @@ class FinanceBalancesView(APIView):
 
         serializer = DailyBalanceSerializer(results, many=True)
         return Response(serializer.data)
+
+
+# ── DailyReport CRUD ───────────────────────────────────────────────────────────
+
+_BALANCE_ACCOUNTS = ["kaspi_pay", "halyk", "cash"]
+
+
+def _build_report_response(report_date: date) -> dict:
+    """Return the canonical GET payload for a given date."""
+    ZERO = "0"
+
+    try:
+        report = (
+            DailyReport.objects
+            .prefetch_related("transactions", "balances")
+            .get(date=report_date)
+        )
+        opening: dict[str, str] = {a: ZERO for a in _BALANCE_ACCOUNTS}
+        for b in report.balances.all():
+            if b.account in opening:
+                opening[b.account] = str(b.balance_start)
+
+        transactions = [
+            {
+                "id":        t.id,
+                "account":   t.account,
+                "direction": t.direction,
+                "amount":    str(t.amount),
+                "comment":   t.comment,
+                "row_order": t.row_order,
+            }
+            for t in sorted(
+                report.transactions.filter(source="manual"),
+                key=lambda t: (t.account, t.row_order),
+            )
+        ]
+        return {
+            "date":             str(report_date),
+            "exists":           True,
+            "is_closed":        report.is_closed,
+            "notes":            report.notes,
+            "transactions":     transactions,
+            "opening_balances": opening,
+        }
+
+    except DailyReport.DoesNotExist:
+        # Carry forward most recent closing balances
+        prev = (
+            DailyReport.objects
+            .filter(date__lt=report_date)
+            .prefetch_related("balances")
+            .order_by("-date")
+            .first()
+        )
+        opening = {a: ZERO for a in _BALANCE_ACCOUNTS}
+        if prev:
+            for b in prev.balances.all():
+                if b.account in opening:
+                    opening[b.account] = str(b.balance_end)
+
+        return {
+            "date":             str(report_date),
+            "exists":           False,
+            "is_closed":        False,
+            "notes":            "",
+            "transactions":     [],
+            "opening_balances": opening,
+        }
+
+
+class DailyReportView(APIView):
+    """
+    GET  /api/v1/finance/daily-report/?date=YYYY-MM-DD
+    POST /api/v1/finance/daily-report/
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        date_str = request.query_params.get("date")
+        if not date_str:
+            return Response({"error": "date parameter required"}, status=400)
+        try:
+            report_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return Response({"error": "Invalid date format. Use YYYY-MM-DD"}, status=400)
+
+        return Response(_build_report_response(report_date))
+
+    def post(self, request):
+        serializer = DailyReportSaveSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        report_date = data["date"]
+
+        with db_transaction.atomic():
+            report, _ = DailyReport.objects.get_or_create(
+                date=report_date,
+                defaults={"created_by": request.user},
+            )
+
+            if report.is_closed:
+                return Response(
+                    {"error": "Отчёт закрыт и не может быть изменён."},
+                    status=400,
+                )
+
+            report.notes = data.get("notes", "")
+            report.save(update_fields=["notes", "updated_at"])
+
+            # Replace all manual transactions for this report
+            report.transactions.filter(source="manual").delete()
+
+            tx_objs = [
+                DailyTransaction(
+                    report=report,
+                    account=tx["account"],
+                    direction=tx["direction"],
+                    amount=tx["amount"],
+                    comment=tx.get("comment", ""),
+                    row_order=i,
+                    source="manual",
+                )
+                for i, tx in enumerate(data["transactions"])
+            ]
+            DailyTransaction.objects.bulk_create(tx_objs)
+
+            # Recalculate and persist balances
+            opening_raw = data.get("opening_balances") or {}
+            for account in _BALANCE_ACCOUNTS:
+                start = Decimal(str(opening_raw.get(account, 0)))
+                income = sum(
+                    tx["amount"]
+                    for tx in data["transactions"]
+                    if tx["account"] == account and tx["direction"] == "income"
+                )
+                expense = sum(
+                    tx["amount"]
+                    for tx in data["transactions"]
+                    if tx["account"] == account and tx["direction"] == "expense"
+                )
+                DailyBalance.objects.update_or_create(
+                    report=report,
+                    account=account,
+                    defaults={"balance_start": start, "balance_end": start + income - expense},
+                )
+
+        return Response(_build_report_response(report_date))

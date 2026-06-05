@@ -1,5 +1,12 @@
 import { api } from "./client";
-import type { DailyBalance, DailySummary, ExpenseCategory, MonthlySummary } from "../types/finance";
+import type {
+  DailyBalance,
+  DailyReportResponse,
+  DailyReportSavePayload,
+  DailySummary,
+  ExpenseCategory,
+  MonthlySummary,
+} from "../types/finance";
 
 export async function fetchSummary(from: string, to: string): Promise<MonthlySummary[]> {
   const { data } = await api.get<MonthlySummary[]>("/finance/summary/", {
@@ -26,5 +33,19 @@ export async function fetchBalances(from: string, to: string): Promise<DailyBala
   const { data } = await api.get<DailyBalance[]>("/finance/balances/", {
     params: { from, to },
   });
+  return data;
+}
+
+export async function fetchDailyReport(date: string): Promise<DailyReportResponse> {
+  const { data } = await api.get<DailyReportResponse>("/finance/daily-report/", {
+    params: { date },
+  });
+  return data;
+}
+
+export async function saveDailyReport(
+  payload: DailyReportSavePayload,
+): Promise<DailyReportResponse> {
+  const { data } = await api.post<DailyReportResponse>("/finance/daily-report/", payload);
   return data;
 }

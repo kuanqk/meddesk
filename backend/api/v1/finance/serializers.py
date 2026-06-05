@@ -1,5 +1,32 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
+
+# ── DailyReport I/O ────────────────────────────────────────────────────────────
+
+class DailyTransactionInputSerializer(serializers.Serializer):
+    account   = serializers.ChoiceField(choices=["kaspi_pay", "halyk", "cash"])
+    direction = serializers.ChoiceField(choices=["income", "expense"])
+    amount    = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal("0.01"))
+    comment   = serializers.CharField(required=False, allow_blank=True, max_length=500, default="")
+    row_order = serializers.IntegerField(required=False, default=0)
+
+
+class OpeningBalancesSerializer(serializers.Serializer):
+    kaspi_pay = serializers.DecimalField(max_digits=14, decimal_places=2, required=False, default=Decimal("0"))
+    halyk     = serializers.DecimalField(max_digits=14, decimal_places=2, required=False, default=Decimal("0"))
+    cash      = serializers.DecimalField(max_digits=14, decimal_places=2, required=False, default=Decimal("0"))
+
+
+class DailyReportSaveSerializer(serializers.Serializer):
+    date             = serializers.DateField()
+    transactions     = DailyTransactionInputSerializer(many=True)
+    opening_balances = OpeningBalancesSerializer(required=False)
+    notes            = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+# ── Analytics serializers ──────────────────────────────────────────────────────
 
 class MonthlySummarySerializer(serializers.Serializer):
     month = serializers.CharField()
