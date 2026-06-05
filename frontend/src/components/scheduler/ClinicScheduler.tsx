@@ -1,7 +1,27 @@
-// @ts-nocheck — ported from docs/clinic_scheduler_v2.jsx; API integration pending
+// @ts-nocheck — ported from docs/clinic_scheduler_v2.jsx
 import { useState, useMemo, useEffect, useRef } from "react";
 import { fetchSchedulerState, saveSchedulerState } from "../../api/scheduler";
+import { fetchStaff } from "../../api/staff";
 import { useAuth } from "../../context/AuthContext";
+import type { StaffMember } from "../../types/staff";
+
+function staffToPerson(s: StaffMember) {
+  const r = s.salary_rule;
+  const baseRate = r ? parseFloat(r.base_rate) : 0.30;
+  const elevatedRate = r ? parseFloat(r.elevated_rate) : 0;
+  const threshold = r ? parseFloat(r.revenue_threshold) || null : null;
+  return {
+    id: String(s.id),
+    name: s.name,
+    role: s.role,
+    color: s.color,
+    rate: baseRate,
+    rate2: elevatedRate && elevatedRate !== baseRate ? elevatedRate : undefined,
+    threshold2: threshold,
+    deductImplant: r?.deduct_implant ?? false,
+    deductLab: r?.deduct_lab ?? false,
+  };
+}
 
 const HOURS    = Array.from({ length: 14 }, (_, i) => i + 8);
 const DAYS     = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
@@ -74,9 +94,12 @@ function initSchedule(people) {
     s[p.id] = {};
     DAYS.forEach((_, di) => { s[p.id][di] = { room: null, hours: new Set() }; });
   });
-  s["dana"][0].room = 2; s["dana"][1].room = 2;
-  s["dana"][2].room = 2; s["dana"][3].room = 2;
-  [0,1,2,3].forEach(di => { for (let h=9;h<18;h++) s["dana"][di].hours.add(h); });
+  // Demo seed only for hardcoded people list (id "dana")
+  if (s["dana"]) {
+    s["dana"][0].room = 2; s["dana"][1].room = 2;
+    s["dana"][2].room = 2; s["dana"][3].room = 2;
+    [0,1,2,3].forEach(di => { for (let h=9;h<18;h++) s["dana"][di].hours.add(h); });
+  }
   return s;
 }
 
@@ -274,7 +297,7 @@ export default function ClinicScheduler() {
 
   useEffect(() => {
     fetchSchedulerState()
-      .then((data) => {
+      .then(async (data) => {
         if (data?.people?.length) {
           setPeople(data.people);
           setSchedule(scheduleFromJson(data.schedule || {}, data.people));
@@ -283,6 +306,16 @@ export default function ClinicScheduler() {
             ? data.sel_id
             : data.people[0]?.id || null;
           setSelId(nextSel);
+        } else {
+          // No saved state — bootstrap people list from staff API
+          const staffList = await fetchStaff().catch(() => []);
+          if (staffList.length) {
+            const mapped = staffList.map(staffToPerson);
+            setPeople(mapped);
+            setSchedule(initSchedule(mapped));
+            setSelId(mapped[0]?.id || null);
+          }
+          // else keep INITIAL_DOCTORS (already in state)
         }
       })
       .catch(() => setSaveStatus("error"))
