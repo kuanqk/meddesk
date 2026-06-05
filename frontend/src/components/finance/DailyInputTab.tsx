@@ -1024,12 +1024,18 @@ export default function DailyInputTab({ initialDate }: DailyInputTabProps) {
         </div>
       )}
 
-      {/* ── Opening balances ── */}
+      {/* ── Opening + Closing balances (stacked at top) ── */}
       <BalancesRow
         label="Остаток начало дня"
         values={openingValues}
         loading={isLoading}
         color={C.textSub}
+      />
+      <BalancesRow
+        label="Остаток конец дня"
+        values={closingValues}
+        loading={isLoading}
+        color={C.accent}
       />
 
       {/* ── Account sections ── */}
@@ -1060,14 +1066,6 @@ export default function DailyInputTab({ initialDate }: DailyInputTabProps) {
           />
         ))}
       </div>
-
-      {/* ── Closing balances ── */}
-      <BalancesRow
-        label="Остаток конец дня"
-        values={closingValues}
-        loading={isLoading}
-        color={C.accent}
-      />
 
       {/* ── Daily summary ── */}
       <div style={{ ...card, padding: "12px 16px", marginBottom: 16, display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
