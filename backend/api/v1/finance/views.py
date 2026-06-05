@@ -1,0 +1,289 @@
+import calendar
+from datetime import date, datetime
+from decimal import Decimal
+
+from django.db.models import Q, Sum
+from django.db.models.functions import TruncMonth
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from apps.finance.models import DailyBalance, DailyReport, DailyTransaction
+
+from .serializers import (
+    DailyBalanceSerializer,
+    DailySummarySerializer,
+    ExpenseCategorySerializer,
+    MonthlySummarySerializer,
+)
+
+# ── helpers ────────────────────────────────────────────────────────────────────
+
+def _parse_month(s: str) -> date:
+    return datetime.strptime(s, "%Y-%m").date()
+
+
+def _parse_date(s: str) -> date:
+    return datetime.strptime(s, "%Y-%m-%d").date()
+
+
+def _month_end(d: date) -> date:
+    _, last = calendar.monthrange(d.year, d.month)
+    return date(d.year, d.month, last)
+
+
+def _next_month(d: date) -> date:
+    if d.month == 12:
+        return date(d.year + 1, 1, 1)
+    return date(d.year, d.month + 1, 1)
+
+
+def _iter_months(start: date, end: date):
+    """Yield first-of-month dates from start..end inclusive."""
+    cur = start.replace(day=1)
+    ceil = end.replace(day=1)
+    while cur <= ceil:
+        yield cur
+        cur = _next_month(cur)
+
+
+# ── expense keyword categories ─────────────────────────────────────────────────
+
+EXPENSE_CATEGORIES = [
+    ("Зарплаты",   Q(comment__icontains="зп") | Q(comment__icontains="зарплат")),
+    ("Материалы",  Q(comment__icontains="матер") | Q(comment__icontains="dental") | Q(comment__icontains="стом")),
+    ("Аренда",     Q(comment__icontains="аренда") | Q(comment__icontains="мурзаб")),
+    ("Комиссии",   Q(comment__icontains="комисс")),
+    ("Наркоз",     Q(comment__icontains="наркоз") | Q(comment__icontains="калымбет")),
+]
+
+_ALL_KNOWN_Q = Q()
+for _name, _q in EXPENSE_CATEGORIES:
+    _ALL_KNOWN_Q |= _q
+
+
+# ── views ──────────────────────────────────────────────────────────────────────
+
+class FinanceSummaryView(APIView):
+    """GET /api/v1/finance/summary/?from=YYYY-MM&to=YYYY-MM"""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            date_from = _parse_month(request.query_params["from"]) if "from" in request.query_params \
+                else date.today().replace(day=1)
+            date_to_month = _parse_month(request.query_params["to"]) if "to" in request.query_params \
+                else date.today().replace(day=1)
+        except ValueError:
+            return Response({"error": "Use YYYY-MM format"}, status=400)
+
+        date_from = date_from.replace(day=1)
+        date_to = _month_end(date_to_month)
+
+        # ── per-month income / expense sums ───────────────────────────────────
+        def monthly_sum(direction: str) -> dict:
+            qs = (
+                DailyTransaction.objects
+                .filter(direction=direction, report__date__range=[date_from, date_to])
+                .annotate(month=TruncMonth("report__date"))
+                .values("month")
+                .annotate(total=Sum("amount"))
+            )
+            return {
+                row["month"].date() if hasattr(row["month"], "date") else row["month"]: row["total"]
+                for row in qs
+            }
+
+        income_map = monthly_sum("income")
+        expense_map = monthly_sum("expense")
+
+        # ── end-of-month closing balances ─────────────────────────────────────
+        # For each month, grab balances from the last DailyReport of that month.
+        results = []
+        for month_start in _iter_months(date_from, date_to):
+            month_end = _month_end(month_start)
+            income = income_map.get(month_start, Decimal("0"))
+            expenses = expense_map.get(month_start, Decimal("0"))
+
+            kaspi = halyk = cash = None
+            last_report = (
+                DailyReport.objects
+                .filter(date__range=[month_start, month_end])
+                .prefetch_related("balances")
+                .order_by("-date")
+                .first()
+            )
+            if last_report:
+                for bal in last_report.balances.all():
+                    if bal.account == "kaspi_pay":
+                        kaspi = bal.balance_end
+                    elif bal.account == "halyk":
+                        halyk = bal.balance_end
+                    elif bal.account == "cash":
+                        cash = bal.balance_end
+
+            results.append({
+                "month": month_start.strftime("%Y-%m"),
+                "income": income,
+                "expenses": expenses,
+                "profit": income - expenses,
+                "kaspi_balance_end": kaspi,
+                "halyk_balance_end": halyk,
+                "cash_balance_end": cash,
+            })
+
+        serializer = MonthlySummarySerializer(results, many=True)
+        return Response(serializer.data)
+
+
+class FinanceDailyView(APIView):
+    """GET /api/v1/finance/daily/?from=YYYY-MM-DD&to=YYYY-MM-DD"""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            date_from = _parse_date(request.query_params.get("from", ""))
+            date_to = _parse_date(request.query_params.get("to", ""))
+        except ValueError:
+            return Response({"error": "Use YYYY-MM-DD format"}, status=400)
+
+        # income / expenses per day
+        def daily_sum(direction: str) -> dict:
+            qs = (
+                DailyTransaction.objects
+                .filter(direction=direction, report__date__range=[date_from, date_to])
+                .values("report__date")
+                .annotate(total=Sum("amount"))
+            )
+            return {row["report__date"]: row["total"] for row in qs}
+
+        income_map = daily_sum("income")
+        expense_map = daily_sum("expense")
+
+        # closing total balance per day from DailyBalance
+        balance_qs = (
+            DailyBalance.objects
+            .filter(
+                report__date__range=[date_from, date_to],
+                account__in=["kaspi_pay", "halyk", "cash"],
+            )
+            .values("report__date")
+            .annotate(total=Sum("balance_end"))
+        )
+        balance_map = {row["report__date"]: row["total"] for row in balance_qs}
+
+        # collect all dates that have any data
+        all_dates = sorted(
+            set(income_map) | set(expense_map) | set(balance_map)
+        )
+
+        results = []
+        for d in all_dates:
+            inc = income_map.get(d, Decimal("0"))
+            exp = expense_map.get(d, Decimal("0"))
+            results.append({
+                "date": d,
+                "income": inc,
+                "expenses": exp,
+                "profit": inc - exp,
+                "total_balance_end": balance_map.get(d),
+            })
+
+        serializer = DailySummarySerializer(results, many=True)
+        return Response(serializer.data)
+
+
+class FinanceExpensesView(APIView):
+    """GET /api/v1/finance/expenses/?from=YYYY-MM&to=YYYY-MM"""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            date_from = _parse_month(request.query_params["from"]).replace(day=1) \
+                if "from" in request.query_params else date.today().replace(day=1)
+            date_to_month = _parse_month(request.query_params["to"]) \
+                if "to" in request.query_params else date.today().replace(day=1)
+        except ValueError:
+            return Response({"error": "Use YYYY-MM format"}, status=400)
+
+        date_to = _month_end(date_to_month)
+
+        base_qs = DailyTransaction.objects.filter(
+            direction="expense",
+            report__date__range=[date_from, date_to],
+        )
+        grand_total = base_qs.aggregate(t=Sum("amount"))["t"] or Decimal("0")
+
+        results = []
+        for name, q_filter in EXPENSE_CATEGORIES:
+            total = base_qs.filter(q_filter).aggregate(t=Sum("amount"))["t"] or Decimal("0")
+            results.append((name, total))
+
+        # Прочее = not matching any category
+        other_total = base_qs.exclude(_ALL_KNOWN_Q).aggregate(t=Sum("amount"))["t"] or Decimal("0")
+        results.append(("Прочее", other_total))
+
+        data = [
+            {
+                "category": name,
+                "total_amount": total,
+                "percentage": float(total / grand_total * 100) if grand_total else 0.0,
+            }
+            for name, total in sorted(results, key=lambda x: x[1], reverse=True)
+        ]
+
+        serializer = ExpenseCategorySerializer(data, many=True)
+        return Response(serializer.data)
+
+
+class FinanceBalancesView(APIView):
+    """GET /api/v1/finance/balances/?from=YYYY-MM-DD&to=YYYY-MM-DD"""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            date_from = _parse_date(request.query_params.get("from", ""))
+            date_to = _parse_date(request.query_params.get("to", ""))
+        except ValueError:
+            return Response({"error": "Use YYYY-MM-DD format"}, status=400)
+
+        # Fetch all closing balances in range
+        rows = (
+            DailyBalance.objects
+            .filter(
+                report__date__range=[date_from, date_to],
+                account__in=["kaspi_pay", "halyk", "cash"],
+            )
+            .values("report__date", "account", "balance_end")
+            .order_by("report__date")
+        )
+
+        # Pivot: date → {account: balance}
+        by_date: dict[date, dict] = {}
+        for row in rows:
+            d = row["report__date"]
+            if d not in by_date:
+                by_date[d] = {}
+            by_date[d][row["account"]] = row["balance_end"]
+
+        results = []
+        for d in sorted(by_date):
+            accs = by_date[d]
+            kaspi = accs.get("kaspi_pay")
+            halyk = accs.get("halyk")
+            cash = accs.get("cash")
+            total = sum(v for v in [kaspi, halyk, cash] if v is not None) or None
+            results.append({
+                "date": d,
+                "kaspi": kaspi,
+                "halyk": halyk,
+                "cash": cash,
+                "total": total,
+            })
+
+        serializer = DailyBalanceSerializer(results, many=True)
+        return Response(serializer.data)
