@@ -26,6 +26,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "rest_framework_simplejwt",
+    "django_celery_beat",
     "apps.accounts",
     "apps.staff",
     "apps.schedule",
@@ -118,3 +119,9 @@ SIMPLE_JWT = {
 # MacDent API
 MACDENT_API_TOKEN = os.environ.get("MACDENT_API_TOKEN", "")
 MACDENT_FILIAL_ID = os.environ.get("MACDENT_FILIAL_ID", "1196")
+
+# Celery / Redis
+REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
+CELERY_BROKER_URL = REDIS_URL
+CELERY_RESULT_BACKEND = REDIS_URL
+CELERY_TIMEZONE = "Asia/Almaty"
