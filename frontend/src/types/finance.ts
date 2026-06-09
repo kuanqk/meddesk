@@ -67,3 +67,21 @@ export interface DailyReportSavePayload {
   opening_balances: ReportOpeningBalances;
   notes: string;
 }
+
+export interface PayrollCalculation {
+  id: number;
+  staff_member_id: number;
+  staff_member_name: string;
+  period: string;
+  revenue_total: string;
+  kpi_threshold: string;
+  rate_below_kpi: string;
+  rate_above_kpi: string;
+  amount_below_kpi: string;
+  amount_above_kpi: string;
+  payroll_total: string;
+  is_confirmed: boolean;
+  confirmed_by_name: string | null;
+  confirmed_at: string | null;
+  notes: string;
+}
