@@ -9,6 +9,10 @@ from .views import (
     FinanceDailyView,
     FinanceExpensesView,
     FinanceSummaryView,
+    PayrollCalculateView,
+    PayrollConfirmView,
+    PayrollListView,
+    PayrollUnconfirmView,
 )
 
 urlpatterns = [
@@ -20,4 +24,8 @@ urlpatterns = [
     path("daily-report/close/",         DailyReportCloseView.as_view(),       name="finance-daily-report-close"),
     path("daily-report/reopen/",        DailyReportReopenView.as_view(),      name="finance-daily-report-reopen"),
     path("daily-report/closed-dates/",  DailyReportClosedDatesView.as_view(), name="finance-daily-report-closed-dates"),
+    path("payroll/",                    PayrollListView.as_view(),            name="finance-payroll-list"),
+    path("payroll/calculate/",          PayrollCalculateView.as_view(),       name="finance-payroll-calculate"),
+    path("payroll/<int:pk>/confirm/",   PayrollConfirmView.as_view(),         name="finance-payroll-confirm"),
+    path("payroll/<int:pk>/unconfirm/", PayrollUnconfirmView.as_view(),       name="finance-payroll-unconfirm"),
 ]

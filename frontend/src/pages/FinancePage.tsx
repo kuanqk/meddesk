@@ -3,8 +3,9 @@ import { fetchSummary, fetchExpenses, fetchBalances } from "../api/finance";
 import type { MonthlySummary, ExpenseCategory, DailyBalance } from "../types/finance";
 import { useAuth } from "../context/AuthContext";
 import DailyInputTab from "../components/finance/DailyInputTab";
+import PayrollTab from "../components/finance/PayrollTab";
 
-type FinanceTab = "overview" | "input";
+type FinanceTab = "overview" | "input" | "payroll";
 
 // ── design tokens (same as ClinicScheduler) ───────────────────────────────────
 const C = {
@@ -282,6 +283,7 @@ export default function FinancePage({ onBack }: { onBack: () => void }) {
         {([
           { id: "overview", label: "📊 Обзор" },
           { id: "input",    label: "📝 Ввод дня" },
+          { id: "payroll",  label: "💰 ФОТ" },
         ] as { id: FinanceTab; label: string }[]).map(t => (
           <button
             key={t.id}
@@ -305,7 +307,12 @@ export default function FinancePage({ onBack }: { onBack: () => void }) {
           <DailyInputTab />
         )}
 
-        {activeTab !== "input" && (
+        {/* ── PAYROLL TAB ── */}
+        {activeTab === "payroll" && (
+          <PayrollTab />
+        )}
+
+        {activeTab === "overview" && (
           <>{/* ── PERIOD SELECTOR ── */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
           <span style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, letterSpacing: 1, textTransform: "uppercase", marginRight: 4 }}>
@@ -505,7 +512,7 @@ export default function FinancePage({ onBack }: { onBack: () => void }) {
 
           </div>
         </div>
-        </>) /* end activeTab !== "input" */}
+        </>) /* end activeTab === "overview" */}
       </div>
     </div>
   );

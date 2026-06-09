@@ -6,6 +6,7 @@ import type {
   DailySummary,
   ExpenseCategory,
   MonthlySummary,
+  PayrollCalculation,
 } from "../types/finance";
 
 export async function fetchSummary(from: string, to: string): Promise<MonthlySummary[]> {
@@ -64,5 +65,27 @@ export async function fetchClosedDates(month: string): Promise<string[]> {
   const { data } = await api.get<string[]>("/finance/daily-report/closed-dates/", {
     params: { month },
   });
+  return data;
+}
+
+export async function fetchPayroll(month: string): Promise<PayrollCalculation[]> {
+  const { data } = await api.get<PayrollCalculation[]>("/finance/payroll/", {
+    params: { month },
+  });
+  return data;
+}
+
+export async function calculatePayroll(month: string): Promise<PayrollCalculation[]> {
+  const { data } = await api.post<PayrollCalculation[]>("/finance/payroll/calculate/", { month });
+  return data;
+}
+
+export async function confirmPayroll(id: number): Promise<PayrollCalculation> {
+  const { data } = await api.post<PayrollCalculation>(`/finance/payroll/${id}/confirm/`, {});
+  return data;
+}
+
+export async function unconfirmPayroll(id: number): Promise<PayrollCalculation> {
+  const { data } = await api.post<PayrollCalculation>(`/finance/payroll/${id}/unconfirm/`, {});
   return data;
 }

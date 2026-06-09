@@ -58,3 +58,30 @@ class DailyBalanceSerializer(serializers.Serializer):
     halyk = serializers.DecimalField(max_digits=16, decimal_places=2, allow_null=True)
     cash = serializers.DecimalField(max_digits=16, decimal_places=2, allow_null=True)
     total = serializers.DecimalField(max_digits=16, decimal_places=2, allow_null=True)
+
+
+# ── Payroll (ФОТ) ────────────────────────────────────────────────────────────
+
+class PayrollCalculationSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    staff_member_id = serializers.IntegerField(source="staff_member.id", read_only=True)
+    staff_member_name = serializers.CharField(source="staff_member.name", read_only=True)
+    period = serializers.DateField(read_only=True)
+    revenue_total = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    kpi_threshold = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    rate_below_kpi = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
+    rate_above_kpi = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
+    amount_below_kpi = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    amount_above_kpi = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    payroll_total = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    is_confirmed = serializers.BooleanField(read_only=True)
+    confirmed_by_name = serializers.SerializerMethodField()
+    confirmed_at = serializers.DateTimeField(read_only=True)
+    notes = serializers.CharField(read_only=True)
+
+    def get_confirmed_by_name(self, obj):
+        user = obj.confirmed_by
+        if not user:
+            return None
+        full = f"{user.first_name} {user.last_name}".strip()
+        return full or user.username

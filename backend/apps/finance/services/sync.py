@@ -108,6 +108,16 @@ class FinanceSyncService:
             rate_b = staff.rate_below_kpi / Decimal("100")
             rate_a = staff.rate_above_kpi / Decimal("100")
 
+            existing = PayrollCalculation.objects.filter(
+                staff_member=staff, period=period_start
+            ).first()
+
+            # Подтверждённые расчёты не перезаписываем — их сначала
+            # нужно явно снять с подтверждения (owner).
+            if existing and existing.is_confirmed:
+                results.append(existing)
+                continue
+
             if rev <= kpi:
                 below = rev * rate_b
                 above = Decimal("0")

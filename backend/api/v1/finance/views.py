@@ -10,7 +10,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.finance.models import DailyBalance, DailyReport, DailyTransaction
+from apps.finance.models import (
+    DailyBalance,
+    DailyReport,
+    DailyTransaction,
+    PayrollCalculation,
+)
+from apps.finance.services.sync import FinanceSyncService
 
 from .serializers import (
     DailyBalanceSerializer,
@@ -18,6 +24,7 @@ from .serializers import (
     DailySummarySerializer,
     ExpenseCategorySerializer,
     MonthlySummarySerializer,
+    PayrollCalculationSerializer,
 )
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -373,6 +380,17 @@ def _is_owner(user) -> bool:
     ).exists()
 
 
+def _is_owner_or_admin(user) -> bool:
+    if user.is_superuser:
+        return True
+    from apps.accounts.models import ClinicMembership
+    return ClinicMembership.objects.filter(
+        user=user,
+        role__in=[ClinicMembership.Role.OWNER, ClinicMembership.Role.ADMIN],
+        is_active=True,
+    ).exists()
+
+
 class DailyReportView(APIView):
     """
     GET  /api/v1/finance/daily-report/?date=YYYY-MM-DD
@@ -541,3 +559,120 @@ class DailyReportClosedDatesView(APIView):
             .order_by("date")
         )
         return Response([d.isoformat() for d in dates])
+
+
+# ── Payroll (ФОТ) ──────────────────────────────────────────────────────────────
+
+class PayrollListView(APIView):
+    """GET /api/v1/finance/payroll/?month=YYYY-MM — список расчётов ФОТ за месяц."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        month_str = request.query_params.get("month")
+        if not month_str:
+            return Response({"error": "month parameter required"}, status=400)
+        try:
+            period = _parse_month(month_str).replace(day=1)
+        except ValueError:
+            return Response({"error": "Use YYYY-MM format"}, status=400)
+
+        qs = (
+            PayrollCalculation.objects
+            .filter(period=period)
+            .select_related("staff_member", "confirmed_by")
+            .order_by("staff_member__name")
+        )
+        return Response(PayrollCalculationSerializer(qs, many=True).data)
+
+
+class PayrollCalculateView(APIView):
+    """POST /api/v1/finance/payroll/calculate/ — owner/admin only.
+
+    body: {"month": "YYYY-MM"}
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not _is_owner_or_admin(request.user):
+            return Response(
+                {"error": "Только владелец или администратор может рассчитывать ФОТ."},
+                status=403,
+            )
+
+        month_str = request.data.get("month")
+        if not month_str:
+            return Response({"error": "month required"}, status=400)
+        try:
+            period = _parse_month(month_str).replace(day=1)
+        except ValueError:
+            return Response({"error": "Use YYYY-MM format"}, status=400)
+
+        FinanceSyncService().calculate_payroll(period.year, period.month)
+
+        # Re-fetch with relations for a consistent, serialized response.
+        qs = (
+            PayrollCalculation.objects
+            .filter(period=period)
+            .select_related("staff_member", "confirmed_by")
+            .order_by("staff_member__name")
+        )
+        return Response(PayrollCalculationSerializer(qs, many=True).data)
+
+
+class PayrollConfirmView(APIView):
+    """POST /api/v1/finance/payroll/{id}/confirm/ — owner only."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        if not _is_owner(request.user):
+            return Response(
+                {"error": "Только владелец может подтверждать ФОТ."},
+                status=403,
+            )
+
+        try:
+            payroll = PayrollCalculation.objects.select_related(
+                "staff_member", "confirmed_by"
+            ).get(pk=pk)
+        except PayrollCalculation.DoesNotExist:
+            return Response({"error": "Расчёт ФОТ не найден."}, status=404)
+
+        payroll.is_confirmed = True
+        payroll.confirmed_by = request.user
+        payroll.confirmed_at = timezone.now()
+        payroll.save(update_fields=["is_confirmed", "confirmed_by", "confirmed_at"])
+
+        return Response(PayrollCalculationSerializer(payroll).data)
+
+
+class PayrollUnconfirmView(APIView):
+    """POST /api/v1/finance/payroll/{id}/unconfirm/ — owner only.
+
+    Снимает подтверждение, после чего расчёт снова можно пересчитать.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        if not _is_owner(request.user):
+            return Response(
+                {"error": "Только владелец может снимать подтверждение ФОТ."},
+                status=403,
+            )
+
+        try:
+            payroll = PayrollCalculation.objects.select_related(
+                "staff_member", "confirmed_by"
+            ).get(pk=pk)
+        except PayrollCalculation.DoesNotExist:
+            return Response({"error": "Расчёт ФОТ не найден."}, status=404)
+
+        payroll.is_confirmed = False
+        payroll.confirmed_by = None
+        payroll.confirmed_at = None
+        payroll.save(update_fields=["is_confirmed", "confirmed_by", "confirmed_at"])
+
+        return Response(PayrollCalculationSerializer(payroll).data)
