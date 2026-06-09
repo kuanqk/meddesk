@@ -12,6 +12,9 @@ from apps.accounts.services import get_user_auth_context
 class EmailLoginView(APIView):
     """Login by email + password, returns JWT tokens."""
 
+    permission_classes = []
+    authentication_classes = []
+
     def post(self, request):
         email = request.data.get("email", "").strip().lower()
         password = request.data.get("password", "")
