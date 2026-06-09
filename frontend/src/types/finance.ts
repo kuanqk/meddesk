@@ -68,6 +68,16 @@ export interface DailyReportSavePayload {
   notes: string;
 }
 
+export interface DoctorRevenueStats {
+  doctor_id: number;
+  doctor_name: string;
+  revenue_total: string;
+  days_worked: number;
+  revenue_per_day: string;
+  share_percent: number;
+  kpi_threshold: string;
+}
+
 export interface PayrollCalculation {
   id: number;
   staff_member_id: number;

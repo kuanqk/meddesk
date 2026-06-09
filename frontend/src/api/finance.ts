@@ -5,6 +5,7 @@ import type {
   DailyReportSavePayload,
   DailySummary,
   ExpenseCategory,
+  DoctorRevenueStats,
   MonthlySummary,
   PayrollCalculation,
 } from "../types/finance";
@@ -64,6 +65,13 @@ export async function reopenDailyReport(date: string): Promise<DailyReportRespon
 export async function fetchClosedDates(month: string): Promise<string[]> {
   const { data } = await api.get<string[]>("/finance/daily-report/closed-dates/", {
     params: { month },
+  });
+  return data;
+}
+
+export async function fetchDoctorsRevenue(from: string, to: string): Promise<DoctorRevenueStats[]> {
+  const { data } = await api.get<DoctorRevenueStats[]>("/finance/doctors-revenue/", {
+    params: { from, to },
   });
   return data;
 }

@@ -4,8 +4,9 @@ import type { MonthlySummary, ExpenseCategory, DailyBalance } from "../types/fin
 import { useAuth } from "../context/AuthContext";
 import DailyInputTab from "../components/finance/DailyInputTab";
 import PayrollTab from "../components/finance/PayrollTab";
+import DoctorsTab from "../components/finance/DoctorsTab";
 
-type FinanceTab = "overview" | "input" | "payroll";
+type FinanceTab = "overview" | "input" | "payroll" | "doctors";
 
 // ── design tokens (same as ClinicScheduler) ───────────────────────────────────
 const C = {
@@ -284,6 +285,7 @@ export default function FinancePage({ onBack }: { onBack: () => void }) {
           { id: "overview", label: "📊 Обзор" },
           { id: "input",    label: "📝 Ввод дня" },
           { id: "payroll",  label: "💰 ФОТ" },
+          { id: "doctors",  label: "🩺 Врачи" },
         ] as { id: FinanceTab; label: string }[]).map(t => (
           <button
             key={t.id}
@@ -310,6 +312,11 @@ export default function FinancePage({ onBack }: { onBack: () => void }) {
         {/* ── PAYROLL TAB ── */}
         {activeTab === "payroll" && (
           <PayrollTab />
+        )}
+
+        {/* ── DOCTORS TAB ── */}
+        {activeTab === "doctors" && (
+          <DoctorsTab />
         )}
 
         {activeTab === "overview" && (

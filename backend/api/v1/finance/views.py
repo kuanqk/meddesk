@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from django.db import transaction as db_transaction
-from django.db.models import Q, Sum
+from django.db.models import Count, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
@@ -14,6 +14,7 @@ from apps.finance.models import (
     DailyBalance,
     DailyReport,
     DailyTransaction,
+    DoctorRevenue,
     PayrollCalculation,
 )
 from apps.finance.services.sync import FinanceSyncService
@@ -297,6 +298,50 @@ class FinanceBalancesView(APIView):
 
         serializer = DailyBalanceSerializer(results, many=True)
         return Response(serializer.data)
+
+
+class DoctorsRevenueView(APIView):
+    """GET /api/v1/finance/doctors-revenue/?from=YYYY-MM-DD&to=YYYY-MM-DD"""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            date_from = _parse_date(request.query_params.get("from", ""))
+            date_to = _parse_date(request.query_params.get("to", ""))
+        except ValueError:
+            return Response({"error": "Use YYYY-MM-DD format"}, status=400)
+
+        rows = (
+            DoctorRevenue.objects
+            .filter(date__range=[date_from, date_to])
+            .values("doctor", "doctor__name", "doctor__kpi_threshold")
+            .annotate(
+                revenue_total=Sum("revenue"),
+                days_worked=Count("date", distinct=True),
+            )
+            .order_by("-revenue_total")
+        )
+
+        grand_total = sum((r["revenue_total"] or Decimal("0")) for r in rows) or Decimal("0")
+
+        results = []
+        for r in rows:
+            total = r["revenue_total"] or Decimal("0")
+            days = r["days_worked"] or 0
+            per_day = (total / days) if days else Decimal("0")
+            share = float(total / grand_total * 100) if grand_total else 0.0
+            results.append({
+                "doctor_id": r["doctor"],
+                "doctor_name": r["doctor__name"],
+                "revenue_total": f"{total:.2f}",
+                "days_worked": days,
+                "revenue_per_day": f"{per_day:.2f}",
+                "share_percent": round(share, 1),
+                "kpi_threshold": f"{(r['doctor__kpi_threshold'] or Decimal('0')):.2f}",
+            })
+
+        return Response(results)
 
 
 # ── DailyReport CRUD ───────────────────────────────────────────────────────────
