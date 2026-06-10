@@ -11,6 +11,8 @@ settings UI without any frontend changes.
 
 from functools import lru_cache
 
+from rest_framework.permissions import BasePermission
+
 TAB_SCHEDULE = "schedule"
 TAB_PL = "pl"
 TAB_WEEK = "week"
@@ -72,3 +74,92 @@ def tabs_for_role(role: str | None, *, is_superuser: bool = False) -> list[str]:
 
     # 2. Hardcoded fallback
     return list(TAB_ACCESS.get(role, DEFAULT_TABS))
+
+
+# ── user-level helpers ─────────────────────────────────────────────────────────
+#
+# A user's effective tabs/role are derived from their active ClinicMembership
+# rows. The same RoleTabAccess matrix drives both the frontend (via /auth/me/)
+# and the API-level RBAC permission classes below.
+
+
+def _active_roles(user) -> set[str]:
+    """Distinct active membership roles for a user."""
+    # Late import to avoid Django "apps not ready" errors at module load time.
+    from apps.accounts.models import ClinicMembership  # noqa: PLC0415
+
+    return set(
+        ClinicMembership.objects
+        .filter(user=user, is_active=True)
+        .values_list("role", flat=True)
+    )
+
+
+def user_tabs(user) -> list[str]:
+    """
+    Effective tabs for a user: union of tabs_for_role over all active roles.
+    Superusers get every tab.
+    """
+    if getattr(user, "is_superuser", False):
+        return list(ALL_TABS)
+
+    tabs: list[str] = []
+    seen: set[str] = set()
+    for role in _active_roles(user):
+        for tab in tabs_for_role(role):
+            if tab not in seen:
+                seen.add(tab)
+                tabs.append(tab)
+    return tabs
+
+
+def is_owner(user) -> bool:
+    if getattr(user, "is_superuser", False):
+        return True
+    from apps.accounts.models import ClinicMembership  # noqa: PLC0415
+
+    return ClinicMembership.objects.filter(
+        user=user, role=ClinicMembership.Role.OWNER, is_active=True
+    ).exists()
+
+
+def is_owner_or_admin(user) -> bool:
+    if getattr(user, "is_superuser", False):
+        return True
+    from apps.accounts.models import ClinicMembership  # noqa: PLC0415
+
+    return ClinicMembership.objects.filter(
+        user=user,
+        role__in=[ClinicMembership.Role.OWNER, ClinicMembership.Role.ADMIN],
+        is_active=True,
+    ).exists()
+
+
+# ── DRF permission classes ───────────────────────────────────────────────────
+
+
+class RoleTabPermission(BasePermission):
+    """Grants access only if `required_tab` is in the user's effective tabs."""
+
+    required_tab: str = ""
+
+    def has_permission(self, request, view) -> bool:
+        user = request.user
+        if not (user and user.is_authenticated):
+            return False
+        return self.required_tab in user_tabs(user)
+
+
+def require_tab(tab: str):
+    """Factory: build a RoleTabPermission subclass bound to `tab`."""
+    return type(f"Req_{tab}", (RoleTabPermission,), {"required_tab": tab})
+
+
+class IsOwnerOrAdmin(BasePermission):
+    """Write access restricted to owner/admin roles (and superusers)."""
+
+    def has_permission(self, request, view) -> bool:
+        user = request.user
+        if not (user and user.is_authenticated):
+            return False
+        return is_owner_or_admin(user)

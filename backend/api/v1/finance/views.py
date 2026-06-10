@@ -6,10 +6,14 @@ from django.db import transaction as db_transaction
 from django.db.models import Count, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.accounts.permissions import (
+    is_owner,
+    is_owner_or_admin,
+    require_tab,
+)
 from apps.finance.models import (
     DailyBalance,
     DailyReport,
@@ -78,7 +82,7 @@ for _name, _q in EXPENSE_CATEGORIES:
 class FinanceSummaryView(APIView):
     """GET /api/v1/finance/summary/?from=YYYY-MM&to=YYYY-MM"""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [require_tab("finance")]
 
     def get(self, request):
         try:
@@ -151,7 +155,7 @@ class FinanceSummaryView(APIView):
 class FinanceDailyView(APIView):
     """GET /api/v1/finance/daily/?from=YYYY-MM-DD&to=YYYY-MM-DD"""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [require_tab("finance")]
 
     def get(self, request):
         try:
@@ -209,7 +213,7 @@ class FinanceDailyView(APIView):
 class FinanceExpensesView(APIView):
     """GET /api/v1/finance/expenses/?from=YYYY-MM&to=YYYY-MM"""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [require_tab("finance")]
 
     def get(self, request):
         try:
@@ -253,7 +257,7 @@ class FinanceExpensesView(APIView):
 class FinanceBalancesView(APIView):
     """GET /api/v1/finance/balances/?from=YYYY-MM-DD&to=YYYY-MM-DD"""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [require_tab("finance")]
 
     def get(self, request):
         try:
@@ -303,7 +307,7 @@ class FinanceBalancesView(APIView):
 class DoctorsRevenueView(APIView):
     """GET /api/v1/finance/doctors-revenue/?from=YYYY-MM-DD&to=YYYY-MM-DD"""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [require_tab("finance")]
 
     def get(self, request):
         try:
@@ -416,24 +420,10 @@ def _build_report_response(report_date: date) -> dict:
         }
 
 
-def _is_owner(user) -> bool:
-    if user.is_superuser:
-        return True
-    from apps.accounts.models import ClinicMembership
-    return ClinicMembership.objects.filter(
-        user=user, role=ClinicMembership.Role.OWNER, is_active=True
-    ).exists()
-
-
-def _is_owner_or_admin(user) -> bool:
-    if user.is_superuser:
-        return True
-    from apps.accounts.models import ClinicMembership
-    return ClinicMembership.objects.filter(
-        user=user,
-        role__in=[ClinicMembership.Role.OWNER, ClinicMembership.Role.ADMIN],
-        is_active=True,
-    ).exists()
+# Owner / owner-or-admin checks live in apps.accounts.permissions and are
+# reused here (and by settings/views) — see is_owner / is_owner_or_admin.
+_is_owner = is_owner
+_is_owner_or_admin = is_owner_or_admin
 
 
 class DailyReportView(APIView):
@@ -442,7 +432,7 @@ class DailyReportView(APIView):
     POST /api/v1/finance/daily-report/
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [require_tab("finance")]
 
     def get(self, request):
         date_str = request.query_params.get("date")
@@ -521,7 +511,7 @@ class DailyReportView(APIView):
 class DailyReportCloseView(APIView):
     """POST /api/v1/finance/daily-report/close/ — owner only."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [require_tab("finance")]
 
     def post(self, request):
         if not _is_owner(request.user):
@@ -551,7 +541,7 @@ class DailyReportCloseView(APIView):
 class DailyReportReopenView(APIView):
     """POST /api/v1/finance/daily-report/reopen/ — owner only."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [require_tab("finance")]
 
     def post(self, request):
         if not _is_owner(request.user):
@@ -584,7 +574,7 @@ class DailyReportClosedDatesView(APIView):
     → list of closed-day date strings in that month.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [require_tab("finance")]
 
     def get(self, request):
         month_str = request.query_params.get("month")
@@ -611,7 +601,7 @@ class DailyReportClosedDatesView(APIView):
 class PayrollListView(APIView):
     """GET /api/v1/finance/payroll/?month=YYYY-MM — список расчётов ФОТ за месяц."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [require_tab("finance")]
 
     def get(self, request):
         month_str = request.query_params.get("month")
@@ -637,7 +627,7 @@ class PayrollCalculateView(APIView):
     body: {"month": "YYYY-MM"}
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [require_tab("finance")]
 
     def post(self, request):
         if not _is_owner_or_admin(request.user):
@@ -669,7 +659,7 @@ class PayrollCalculateView(APIView):
 class PayrollConfirmView(APIView):
     """POST /api/v1/finance/payroll/{id}/confirm/ — owner only."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [require_tab("finance")]
 
     def post(self, request, pk):
         if not _is_owner(request.user):
@@ -699,7 +689,7 @@ class PayrollUnconfirmView(APIView):
     Снимает подтверждение, после чего расчёт снова можно пересчитать.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [require_tab("finance")]
 
     def post(self, request, pk):
         if not _is_owner(request.user):

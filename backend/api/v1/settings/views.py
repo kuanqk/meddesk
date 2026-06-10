@@ -2,8 +2,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts.models import ClinicMembership, RoleTabAccess
-from apps.accounts.permissions import ALL_AVAILABLE_TABS, TAB_ACCESS
+from apps.accounts.models import RoleTabAccess
+from apps.accounts.permissions import ALL_AVAILABLE_TABS, TAB_ACCESS, is_owner
 
 ROLE_LABELS = {
     "owner":            "Владелец",
@@ -15,14 +15,6 @@ ROLE_LABELS = {
 
 # Roles shown in the settings UI (owner is shown but always locked)
 MANAGED_ROLES = ["owner", "admin", "doctor", "anesthesiologist", "receptionist"]
-
-
-def _is_owner(user) -> bool:
-    if user.is_superuser:
-        return True
-    return ClinicMembership.objects.filter(
-        user=user, role=ClinicMembership.Role.OWNER, is_active=True
-    ).exists()
 
 
 def _current_tabs(role: str) -> list[str]:
@@ -61,7 +53,7 @@ class PermissionsView(APIView):
         return Response(data)
 
     def put(self, request):
-        if not _is_owner(request.user):
+        if not is_owner(request.user):
             return Response({"error": "Только владелец может изменять права доступа."}, status=403)
 
         payload = request.data  # expected: [{role, tabs}, ...]

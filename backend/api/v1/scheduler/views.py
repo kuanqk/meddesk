@@ -1,15 +1,15 @@
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.accounts.permissions import require_tab
 from apps.schedule.services import load_scheduler_state, save_scheduler_state
 
 from .serializers import SchedulerStateSerializer
 
 
 class SchedulerStateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [require_tab("schedule")]
 
     def get(self, request):
         data = load_scheduler_state()
