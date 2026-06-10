@@ -3,7 +3,7 @@ import { useAuth } from "../context/AuthContext";
 
 export default function LoginPage() {
   const { login } = useAuth();
-  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -13,7 +13,7 @@ export default function LoginPage() {
     setError(null);
     setIsSubmitting(true);
     try {
-      await login({ username: username.trim(), password });
+      await login({ email: email.trim(), password });
     } catch {
       setError("Неверный логин или пароль");
     } finally {
@@ -38,9 +38,9 @@ export default function LoginPage() {
             </label>
             <input
               type="text"
-              autoComplete="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               className="w-full rounded-lg border border-[#d1cec6] bg-[#f5f5f0] px-3 py-2.5 text-sm outline-none focus:border-blue-600"
               required
             />
