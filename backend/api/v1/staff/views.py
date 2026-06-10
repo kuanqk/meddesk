@@ -1,5 +1,6 @@
-from rest_framework import viewsets
+from rest_framework import status, viewsets
 from rest_framework.permissions import SAFE_METHODS, BasePermission
+from rest_framework.response import Response
 
 from apps.accounts.permissions import IsOwnerOrAdmin, user_tabs
 from apps.staff.models import StaffMember
@@ -40,3 +41,15 @@ class StaffMemberViewSet(viewsets.ModelViewSet):
         if role:
             queryset = queryset.filter(role=role)
         return queryset.filter(is_active=True)
+
+    def destroy(self, request, *args, **kwargs):
+        """Soft-delete: mark inactive instead of removing the row.
+
+        Keeps the staff member's financial history (DoctorRevenue,
+        PayrollCalculation) intact. The member drops out of all listings
+        because get_queryset() filters on is_active=True.
+        """
+        instance = self.get_object()
+        instance.is_active = False
+        instance.save(update_fields=["is_active"])
+        return Response(status=status.HTTP_204_NO_CONTENT)

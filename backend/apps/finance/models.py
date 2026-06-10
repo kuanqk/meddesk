@@ -43,7 +43,7 @@ class DoctorRevenue(models.Model):
 
     doctor = models.ForeignKey(
         StaffMember,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name="revenues",
         verbose_name="Врач",
     )
@@ -81,7 +81,7 @@ class PayrollCalculation(models.Model):
 
     staff_member = models.ForeignKey(
         StaffMember,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name="payrolls",
         verbose_name="Сотрудник",
     )
