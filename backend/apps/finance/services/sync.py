@@ -51,8 +51,16 @@ class FinanceSyncService:
             raise
 
     def _save_revenues(self, payments: list) -> int:
+        """Агрегирует платежи MacDent по (врач, дата) и сохраняет суммы.
+
+        Один врач может иметь несколько платежей за день — их нужно
+        просуммировать в одну строку DoctorRevenue, а не перезаписывать.
+        Ручные/Excel-строки не трогаем (их выручка из другого источника).
+        """
         from datetime import datetime
-        saved = 0
+
+        # ── Pass 1: агрегируем платежи по ключу (staff, дата) ────────────────
+        groups: dict[tuple[int, date], dict] = {}
         for p in payments:
             doctor_id = p.get("doctor")  # field is "doctor", not "doctor_id"
             if not doctor_id:
@@ -71,15 +79,44 @@ class FinanceSyncService:
                 logger.warning("Cannot parse date: %s", raw_date)
                 continue
 
+            key = (staff.pk, pay_date)
+            group = groups.get(key)
+            if group is None:
+                group = {
+                    "staff": staff,
+                    "date": pay_date,
+                    "revenue": Decimal("0"),
+                    "payments": [],
+                }
+                groups[key] = group
+            group["revenue"] += Decimal(str(p.get("summ", 0)))  # field is "summ"
+            group["payments"].append(p)
+
+        # ── Pass 2: пишем по одной агрегированной строке на (врач, дата) ─────
+        saved = 0
+        for group in groups.values():
+            staff = group["staff"]
+            pay_date = group["date"]
+
+            existing = DoctorRevenue.objects.filter(doctor=staff, date=pay_date).first()
+            if existing and existing.source in ("excel", "manual"):
+                logger.warning(
+                    "manual/excel revenue exists for doctor %s date %s, skipping macdent overwrite",
+                    staff.macdent_id, pay_date,
+                )
+                continue
+
             DoctorRevenue.objects.update_or_create(
                 doctor=staff,
                 date=pay_date,
                 defaults={
-                    "revenue": Decimal(str(p.get("summ", 0))),  # field is "summ"
-                    "patients_count": 1,
-                    "hours_worked": Decimal("0"),
+                    "revenue": group["revenue"],
+                    "patients_count": len(group["payments"]),
                     "source": "macdent",
-                    "raw_data": p,
+                    "raw_data": group["payments"],
+                    # hours_worked намеренно не в defaults: при создании
+                    # сработает дефолт модели (0), при апдейте существующее
+                    # значение не затирается.
                 },
             )
             saved += 1
