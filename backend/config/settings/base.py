@@ -105,6 +105,13 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 100,
+    # ScopedRateThrottle лимитирует ТОЛЬКО вьюхи с явным throttle_scope,
+    # поэтому остальные endpoints не затрагиваются. Счётчики хранятся в
+    # Django cache (LocMemCache в dev — НЕ общий между воркерами gunicorn;
+    # в Спринте 8 при подключении Redis перевести throttle-кэш на Redis,
+    # чтобы лимит был общим между процессами).
+    "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.ScopedRateThrottle"],
+    "DEFAULT_THROTTLE_RATES": {"login": "10/min"},
 }
 
 JWT_ACCESS_MINUTES = int(os.environ.get("JWT_ACCESS_TOKEN_LIFETIME_MINUTES", "60"))

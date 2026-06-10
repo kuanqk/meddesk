@@ -2,6 +2,7 @@ from django.contrib.auth import authenticate
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -14,6 +15,9 @@ class EmailLoginView(APIView):
 
     permission_classes = []
     authentication_classes = []
+    # Анонимы идентифицируются по IP — лимит 10 попыток/мин (rate в settings).
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "login"
 
     def post(self, request):
         email = request.data.get("email", "").strip().lower()
