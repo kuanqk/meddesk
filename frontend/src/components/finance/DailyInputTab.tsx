@@ -835,8 +835,11 @@ export default function DailyInputTab({ initialDate }: DailyInputTabProps) {
           });
         });
     }
-    return { date, transactions, opening_balances: opening, notes };
-  }, [date, rows, opening, notes]);
+    // opening_balances is intentionally omitted: the server derives
+    // balance_start from the previous day's balance_end (cascade chain) and
+    // ignores any client-sent opening. Display still reads opening from GET.
+    return { date, transactions, notes };
+  }, [date, rows, notes]);
 
   const doSave = useCallback(async (payload: DailyReportSavePayload) => {
     setIsSaving(true);

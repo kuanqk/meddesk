@@ -69,7 +69,9 @@ export interface DailyReportSavePayload {
   // Only editable (manual) rows are sent; the server always stores them as
   // "manual", so source is intentionally excluded from the payload.
   transactions: Omit<ReportTransaction, "id" | "source">[];
-  opening_balances: ReportOpeningBalances;
+  // The server derives balance_start from the previous day and ignores any
+  // client-sent opening, so this is optional and no longer sent.
+  opening_balances?: ReportOpeningBalances;
   notes: string;
 }
 

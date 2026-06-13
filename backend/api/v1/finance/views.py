@@ -1,4 +1,5 @@
 import calendar
+import logging
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -21,6 +22,7 @@ from apps.finance.models import (
     DoctorRevenue,
     PayrollCalculation,
 )
+from apps.finance.services.balances import opening_for_date, propagate_balances_forward
 from apps.finance.services.sync import FinanceSyncService
 
 from .serializers import (
@@ -31,6 +33,8 @@ from .serializers import (
     MonthlySummarySerializer,
     PayrollCalculationSerializer,
 )
+
+logger = logging.getLogger(__name__)
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -395,19 +399,9 @@ def _build_report_response(report_date: date) -> dict:
         }
 
     except DailyReport.DoesNotExist:
-        # For each account independently, find the most recent balance_end
-        # from any prior report. This correctly bridges gap days (weekends/holidays)
-        # where an account may not have a balance row.
-        opening = {a: ZERO for a in _BALANCE_ACCOUNTS}
-        for account in _BALANCE_ACCOUNTS:
-            last_bal = (
-                DailyBalance.objects
-                .filter(report__date__lt=report_date, account=account)
-                .order_by("-report__date")
-                .first()
-            )
-            if last_bal:
-                opening[account] = str(last_bal.balance_end)
+        # No report yet — opening is the most recent prior balance_end per
+        # account (gap-day bridging), shared with the server-side chain.
+        opening = {a: str(v) for a, v in opening_for_date(report_date).items()}
 
         return {
             "date":             str(report_date),
@@ -488,13 +482,34 @@ class DailyReportView(APIView):
             ]
             DailyTransaction.objects.bulk_create(tx_objs)
 
-            # Recalculate balances from ALL transactions of the report
-            # (manual + imported), not just the incoming payload. Otherwise the
-            # closing balance would ignore the preserved imported rows.
-            opening_raw = data.get("opening_balances") or {}
+            # Server derives balance_start from the previous day's balance_end
+            # (the cascade chain). The client's opening_balances are IGNORED for
+            # computation — kept in the payload only for backward compat.
+            # balance_end = balance_start + Σincome − Σexpense over ALL rows of
+            # the report (manual + imported), as established in C3.
+            opening = opening_for_date(report_date)
+            client_opening = data.get("opening_balances") or {}
             all_tx = list(report.transactions.all())
             for account in _BALANCE_ACCOUNTS:
-                start = Decimal(str(opening_raw.get(account, 0)))
+                has_prior = DailyBalance.objects.filter(
+                    report__date__lt=report_date, account=account
+                ).exists()
+                if has_prior:
+                    start = opening[account]
+                else:
+                    # Anchor (earliest day for this account): keep its stored
+                    # balance_start; never zero it from a derived chain.
+                    existing = DailyBalance.objects.filter(
+                        report=report, account=account
+                    ).first()
+                    start = existing.balance_start if existing else Decimal("0")
+
+                if account in client_opening and Decimal(str(client_opening[account])) != start:
+                    logger.info(
+                        "Ignoring client opening for %s on %s: client=%s server=%s",
+                        account, report_date, client_opening[account], start,
+                    )
+
                 income = sum(
                     (t.amount for t in all_tx
                      if t.account == account and t.direction == "income"),
@@ -510,6 +525,10 @@ class DailyReportView(APIView):
                     account=account,
                     defaults={"balance_start": start, "balance_end": start + income - expense},
                 )
+
+            # Cascade: recompute the balance chain for all later days so editing
+            # a past day keeps the whole register self-consistent.
+            propagate_balances_forward(from_date=report_date, commit=True)
 
         return Response(_build_report_response(report_date))
 

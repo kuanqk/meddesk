@@ -1,27 +1,23 @@
 """
 Распространить цепочку балансов: balance_end[n-1] → balance_start[n].
 
-Для каждого счёта независимо:
-  - первый день оставить как есть (якорь)
-  - для каждого последующего дня (по DailyBalance):
-        balance_start = prev_day.balance_end
-        balance_end   = balance_start + Σincome − Σexpense  (из транзакций)
-        DailyBalance.update_or_create(...)
+Математика вынесена в apps.finance.services.balances.propagate_balances_forward
+(тот же сервис, что использует DailyReportView.post). Команда остаётся как
+health-check: `--dry-run` показывает расхождения, не сохраняя.
 
-Между prev и cur могут быть «gap days» (нет DailyReport) — это нормально:
-balance_start cur == balance_end prev, потому что в пропущенные дни операций нет.
+Для каждого счёта независимо:
+  - первый день — якорь (не трогается);
+  - для каждого последующего дня:
+        balance_start = balance_end предыдущего дня
+        balance_end   = balance_start + Σincome − Σexpense
+Между днями могут быть «gap days» (нет DailyReport) — это нормально.
 """
 
 from datetime import datetime
-from decimal import Decimal
 
 from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction as db_transaction
-from django.db.models import Sum
 
-from apps.finance.models import DailyBalance, DailyTransaction
-
-ACCOUNTS = ("kaspi_pay", "halyk", "cash")
+from apps.finance.services.balances import ACCOUNTS, propagate_balances_forward
 
 
 class Command(BaseCommand):
@@ -59,86 +55,27 @@ class Command(BaseCommand):
         if dry_run:
             self.stdout.write(self.style.WARNING("*** DRY RUN — изменения не сохраняются ***\n"))
 
-        grand_updated = 0
+        diffs = propagate_balances_forward(
+            from_date=date_from, commit=not dry_run, accounts=accounts
+        )
 
+        by_account: dict[str, list] = {a: [] for a in accounts}
+        for d in diffs:
+            by_account.setdefault(d["account"], []).append(d)
+
+        grand_updated = 0
         for account in accounts:
             self.stdout.write(f"\n── {account} ─────────────────────────────────")
-
-            rows = list(
-                DailyBalance.objects
-                .filter(account=account)
-                .select_related("report")
-                .order_by("report__date")
-            )
-            if not rows:
-                self.stdout.write("  Нет данных по этому счёту.")
-                continue
-
-            updated = 0
-            processed = 0
-            prev = None
-
-            for cur in rows:
-                processed += 1
-
-                # Якорь = первый день в цепочке
-                if prev is None:
-                    prev = cur
-                    continue
-
-                # Пропускаем дни до --from (но обновляем prev, чтобы цепочка не порвалась)
-                if date_from and cur.report.date < date_from:
-                    prev = cur
-                    continue
-
-                new_start = prev.balance_end
-
-                income = (
-                    DailyTransaction.objects
-                    .filter(report=cur.report, account=account, direction="income")
-                    .aggregate(s=Sum("amount"))["s"] or Decimal("0")
+            acc_diffs = by_account.get(account, [])
+            for d in acc_diffs:
+                delta = d["new_start"] - d["old_start"]
+                self.stdout.write(
+                    f"  {d['date']}  start {d['old_start']:>14,.2f} → {d['new_start']:>14,.2f} "
+                    f"(Δ={delta:+,.2f})  end → {d['new_end']:>14,.2f}"
                 )
-                expense = (
-                    DailyTransaction.objects
-                    .filter(report=cur.report, account=account, direction="expense")
-                    .aggregate(s=Sum("amount"))["s"] or Decimal("0")
-                )
-                new_end = new_start + income - expense
-
-                changed = (
-                    new_start != cur.balance_start
-                    or new_end != cur.balance_end
-                )
-
-                if changed:
-                    delta_start = new_start - cur.balance_start
-                    if dry_run:
-                        self.stdout.write(
-                            f"  {cur.report.date}  start {cur.balance_start:>14,.2f} → {new_start:>14,.2f} "
-                            f"(Δ={delta_start:+,.2f})  end → {new_end:>14,.2f}"
-                        )
-                    else:
-                        with db_transaction.atomic():
-                            DailyBalance.objects.filter(pk=cur.pk).update(
-                                balance_start=new_start,
-                                balance_end=new_end,
-                            )
-                        # Refresh local copy so the next iteration uses new value
-                        cur.balance_start = new_start
-                        cur.balance_end = new_end
-                    updated += 1
-
-                prev = cur
-
-                if processed % 50 == 0:
-                    flag = "[dry-run] " if dry_run else ""
-                    self.stdout.write(f"  {flag}обработано {processed}/{len(rows)} (обновлено {updated})")
-
-            self.stdout.write(
-                f"  → {account}: {updated} балансов "
-                f"{'будет обновлено' if dry_run else 'обновлено'} из {processed} проверенных"
-            )
-            grand_updated += updated
+            verb = "будет обновлено" if dry_run else "обновлено"
+            self.stdout.write(f"  → {account}: {len(acc_diffs)} балансов {verb}")
+            grand_updated += len(acc_diffs)
 
         self.stdout.write(f"\n{'═'*60}")
         if dry_run:
