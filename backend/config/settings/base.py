@@ -26,6 +26,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "rest_framework_simplejwt",
+    "rest_framework_simplejwt.token_blacklist",
     "django_celery_beat",
     "apps.accounts",
     "apps.staff",
@@ -121,6 +122,9 @@ SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=JWT_ACCESS_MINUTES),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=JWT_REFRESH_DAYS),
     "ROTATE_REFRESH_TOKENS": True,
+    # Blacklist the old refresh token after rotation so it can't be reused
+    # (e.g. a stolen token is invalidated as soon as a new one is issued).
+    "BLACKLIST_AFTER_ROTATION": True,
 }
 
 # MacDent API
