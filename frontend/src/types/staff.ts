@@ -1,11 +1,3 @@
-export interface SalaryRule {
-  base_rate: string;
-  elevated_rate: string;
-  revenue_threshold: string;
-  deduct_implant: boolean;
-  deduct_lab: boolean;
-}
-
 export interface StaffMember {
   id: number;
   clinic: number;
@@ -13,9 +5,20 @@ export interface StaffMember {
   role: "doctor" | "anesthesiologist";
   color: string;
   is_active: boolean;
-  salary_rule: SalaryRule | null;
+  // KPI fields are present only for the owner (server hides them otherwise).
+  kpi_threshold?: string;
+  rate_below_kpi?: string;
+  rate_above_kpi?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface SalaryPreview {
+  staff_id: number;
+  revenue: string;
+  below: string;
+  above: string;
+  salary: string;
 }
 
 export interface PaginatedResponse<T> {

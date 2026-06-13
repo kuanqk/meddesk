@@ -1,25 +1,22 @@
 // @ts-nocheck — ported from docs/clinic_scheduler_v2.jsx
 import { useState, useMemo, useEffect, useRef } from "react";
 import { fetchSchedulerState, saveSchedulerState } from "../../api/scheduler";
-import { fetchStaff } from "../../api/staff";
+import { fetchStaff, fetchSalaryPreview } from "../../api/staff";
 import { useAuth } from "../../context/AuthContext";
 import type { StaffMember } from "../../types/staff";
 
 function staffToPerson(s: StaffMember) {
-  const r = s.salary_rule;
-  const baseRate = r ? parseFloat(r.base_rate) : 0.30;
-  const elevatedRate = r ? parseFloat(r.elevated_rate) : 0;
-  const threshold = r ? parseFloat(r.revenue_threshold) || null : null;
+  // Doctor salary now comes from the KPI salary-preview endpoint, not from a
+  // per-person salary_rule. `rate` is kept only for anesthesiologists, whose
+  // ФОТ stays client-side (monthHours * REVENUE_PER_HOUR * rate).
   return {
     id: String(s.id),
     name: s.name,
     role: s.role,
     color: s.color,
-    rate: baseRate,
-    rate2: elevatedRate && elevatedRate !== baseRate ? elevatedRate : undefined,
-    threshold2: threshold,
-    deductImplant: r?.deduct_implant ?? false,
-    deductLab: r?.deduct_lab ?? false,
+    rate: 0.30,
+    deductImplant: false,
+    deductLab: false,
   };
 }
 
@@ -54,14 +51,6 @@ const INITIAL_DOCTORS = [
   { id:"zhanneta", name:"Жаннета", color:"#ea580c", role:"doctor", rate:0.30, rate2:0.35, threshold2:5000000, deductImplant:true,  deductLab:false },
   { id:"diar",     name:"Диар",    color:"#65a30d", role:"doctor", rate:0.40, threshold2:null,    deductImplant:false, deductLab:false },
 ];
-
-function calcDoctorSalary(revenue, doctor) {
-  let base = revenue;
-  if (doctor.deductImplant) base = revenue * (1 - IMPLANT_RATE);
-  if (doctor.deductLab)     base = revenue * (1 - LAB_RATE);
-  if (!doctor.threshold2 || base <= doctor.threshold2) return base * doctor.rate;
-  return doctor.threshold2 * doctor.rate + (base - doctor.threshold2) * doctor.rate2;
-}
 
 function cloneSched(prev) {
   const s = JSON.parse(JSON.stringify(prev, (k, v) => v instanceof Set ? [...v] : v));
@@ -267,6 +256,7 @@ function PersonModal({ person, allPeople, onSave, onClose, C }) {
 /* ─── MAIN COMPONENT ─────────────────────────────────────────── */
 export default function ClinicScheduler({ onNavigateFinance, onNavigateSettings }: { onNavigateFinance?: () => void; onNavigateSettings?: () => void }) {
   const { user, allowedTabs, logout } = useAuth();
+  const isOwner = !!(user?.is_superuser || user?.role === "owner");
   const visibleTabs = TAB_ITEMS.filter((t) => allowedTabs.includes(t.id));
 
   const [activeTab,    setActiveTab]    = useState("schedule");
@@ -283,6 +273,9 @@ export default function ClinicScheduler({ onNavigateFinance, onNavigateSettings 
 
   // Schedule keyed by person id
   const [schedule, setSchedule] = useState(() => initSchedule(INITIAL_DOCTORS));
+  // Doctor ФОТ keyed by person id, fetched from the owner-only salary-preview
+  // endpoint. Empty for non-owners (endpoint returns 403).
+  const [salaryById, setSalaryById] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -426,21 +419,53 @@ export default function ClinicScheduler({ onNavigateFinance, onNavigateSettings 
     return s;
   });
 
-  /* ── Stats ── */
-  const stats = useMemo(() => {
-    const personStats = {};
+  /* ── Per-person hours & revenue (independent of salary) ── */
+  const personHours = useMemo(() => {
+    const out = {};
     people.forEach(p => {
       let totalHours = 0;
       DAYS.forEach((_,di) => { const c=schedule[p.id]?.[di]; if(c?.hours.size) totalHours+=c.hours.size; });
       const monthHours = totalHours * 4.3;
       const revenue    = p.role==="doctor" ? monthHours * REVENUE_PER_HOUR : 0;
-      const salary     = p.role==="doctor" ? calcDoctorSalary(revenue, p) : monthHours * REVENUE_PER_HOUR * p.rate;
+      out[p.id] = { totalHours, monthHours, revenue };
+    });
+    return out;
+  }, [people, schedule]);
+
+  /* ── Owner-only: fetch KPI salary per doctor for their projected revenue ── */
+  useEffect(() => {
+    if (!isOwner) { setSalaryById({}); return; }
+    const doctors = people.filter(p => p.role === "doctor");
+    let cancelled = false;
+    Promise.all(doctors.map(p =>
+      fetchSalaryPreview(p.id, Math.round(personHours[p.id]?.revenue ?? 0))
+        .then(r => [p.id, parseFloat(r.salary)] as const)
+        .catch(() => [p.id, null] as const)
+    )).then(entries => {
+      if (cancelled) return;
+      const next = {};
+      entries.forEach(([id, val]) => { if (val != null) next[id] = val; });
+      setSalaryById(next);
+    });
+    return () => { cancelled = true; };
+  }, [isOwner, people, personHours]);
+
+  /* ── Stats ── */
+  const stats = useMemo(() => {
+    const personStats = {};
+    people.forEach(p => {
+      const { totalHours, monthHours, revenue } = personHours[p.id] || { totalHours:0, monthHours:0, revenue:0 };
+      // Doctors: ФОТ from the KPI endpoint (owner only; null otherwise).
+      // Anesthesiologists: unchanged client-side rate formula.
+      const salary = p.role==="doctor"
+        ? (isOwner ? (salaryById[p.id] ?? 0) : null)
+        : monthHours * REVENUE_PER_HOUR * p.rate;
       personStats[p.id] = { totalHours, monthHours, revenue, salary };
     });
 
     const doctors = people.filter(p=>p.role==="doctor");
     const totalRevenue = doctors.reduce((s,p)=>s+personStats[p.id].revenue, 0);
-    const totalSalary  = people.reduce((s,p)=>s+personStats[p.id].salary, 0);
+    const totalSalary  = people.reduce((s,p)=>s+(personStats[p.id].salary ?? 0), 0);
     const anesthesia   = totalRevenue * (expenses.anesthesia_pct/100);
     const tax          = totalRevenue * 0.03;
     const bankFee      = totalRevenue * 0.02;
@@ -466,10 +491,12 @@ export default function ClinicScheduler({ onNavigateFinance, onNavigateSettings 
     });
 
     return { personStats, totalRevenue, totalSalary, anesthesia, tax, bankFee, totalExp, profit, margin, conflicts };
-  }, [schedule, expenses, people]);
+  }, [schedule, expenses, people, personHours, salaryById, isOwner]);
 
   const fmt = n => n>=1000000?`${(n/1000000).toFixed(1)}M`:n>=1000?`${(n/1000).toFixed(0)}k`:String(Math.round(n));
   const fmtFull = n => new Intl.NumberFormat("ru-KZ").format(Math.round(n));
+  // Salary may be hidden (null) for non-owners — show a dash instead of NaN.
+  const fmtSalary = n => (n == null ? "—" : fmtFull(n));
   const conflictCount = Object.keys(stats.conflicts).length;
 
   const selPerson = people.find(p=>p.id===selId);
@@ -704,7 +731,7 @@ export default function ClinicScheduler({ onNavigateFinance, onNavigateSettings 
                     </span>
                     <div style={{ marginLeft:"auto", display:"flex", gap:12, alignItems:"center" }}>
                       {selPerson.role==="doctor" && <span style={{ fontSize:12 }}>Выручка: <strong style={{ color:C.green }}>{fmtFull(selStats.revenue)} тг</strong></span>}
-                      <span style={{ fontSize:12 }}>ФОТ: <strong style={{ color:C.amber }}>{fmtFull(selStats.salary)} тг</strong></span>
+                      <span style={{ fontSize:12 }}>ФОТ: <strong style={{ color:C.amber }}>{fmtSalary(selStats.salary)} тг</strong></span>
                       <button onClick={()=>setModal({mode:"edit",person:selPerson})} style={{ background:C.bg, border:`1px solid ${C.border2}`, borderRadius:7, padding:"4px 10px", fontSize:11, cursor:"pointer", color:C.textSub, fontFamily:"inherit" }}>✎ Изменить</button>
                       <button onClick={()=>{ if(window.confirm(`Удалить ${selPerson.name}?`)) handleDeletePerson(selPerson.id); }} style={{ background:C.redBg, border:"1px solid #fecaca", borderRadius:7, padding:"4px 10px", fontSize:11, cursor:"pointer", color:C.red, fontFamily:"inherit" }}>✕ Удалить</button>
                     </div>
@@ -833,8 +860,8 @@ export default function ClinicScheduler({ onNavigateFinance, onNavigateSettings 
                           const base = ps.revenue - deduction;
                           const rateLabel = p.rate2?`${(p.rate*100).toFixed(0)}/${(p.rate2*100).toFixed(0)}%`:`${(p.rate*100).toFixed(0)}%`;
                           const vals = grp.group==="doctor"
-                            ? [Math.round(ps.monthHours), fmtFull(ps.revenue), deduction>0?`−${fmtFull(deduction)}`:"—", fmtFull(base), rateLabel, fmtFull(ps.salary), ps.revenue>0?`${(ps.salary/ps.revenue*100).toFixed(1)}%`:"—"]
-                            : [Math.round(ps.monthHours), "—", "—", "—", rateLabel, fmtFull(ps.salary), "—"];
+                            ? [Math.round(ps.monthHours), fmtFull(ps.revenue), deduction>0?`−${fmtFull(deduction)}`:"—", fmtFull(base), rateLabel, fmtSalary(ps.salary), (ps.salary!=null&&ps.revenue>0)?`${(ps.salary/ps.revenue*100).toFixed(1)}%`:"—"]
+                            : [Math.round(ps.monthHours), "—", "—", "—", rateLabel, fmtSalary(ps.salary), "—"];
                           return (
                             <tr key={p.id} style={{ background:i%2===0?"#fff":"#fafaf9", borderBottom:`1px solid ${C.border}` }}>
                               <td style={{ padding:"9px 12px" }}>
@@ -860,7 +887,9 @@ export default function ClinicScheduler({ onNavigateFinance, onNavigateSettings 
                 <div style={{ fontSize:13, fontWeight:700, marginBottom:16, paddingBottom:12, borderBottom:`1px solid ${C.border}` }}>P&L за месяц</div>
                 {[
                   { label:"Выручка (врачи)", value:stats.totalRevenue, color:C.green, bold:true },
-                  { label:`ФОТ всех (${(stats.totalSalary/(stats.totalRevenue||1)*100).toFixed(1)}%)`, value:-stats.totalSalary, color:C.red },
+                  // Salary-dependent rows are owner-only (doctor ФОТ comes from
+                  // the 403-gated endpoint); value:null renders as "—".
+                  { label:isOwner?`ФОТ всех (${(stats.totalSalary/(stats.totalRevenue||1)*100).toFixed(1)}%)`:"ФОТ всех", value:isOwner?-stats.totalSalary:null, color:C.red },
                   { label:`Наркоз (${expenses.anesthesia_pct}%)`, value:-stats.anesthesia, color:C.red },
                   { label:"Аренда", value:-expenses.rent, color:C.red },
                   { label:"Маркетинг", value:-expenses.marketing, color:C.red },
@@ -868,15 +897,15 @@ export default function ClinicScheduler({ onNavigateFinance, onNavigateSettings 
                   { label:"Налог 3%", value:-stats.tax, color:C.amber },
                   { label:"Комиссии банков 2%", value:-stats.bankFee, color:C.amber },
                   { label:"Прочее", value:-expenses.other, color:C.red },
-                  { label:"ОПЕРАЦ. ПРИБЫЛЬ", value:stats.profit, color:stats.profit>0?C.green:C.red, bold:true, border:true },
+                  { label:"ОПЕРАЦ. ПРИБЫЛЬ", value:isOwner?stats.profit:null, color:(isOwner&&stats.profit>0)?C.green:C.red, bold:true, border:true },
                 ].map((row,i)=>(
                   <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"7px 4px", borderTop:row.border?`2px solid ${C.border2}`:"none", marginTop:row.border?8:0, background:row.bold&&!row.border?"#f0fdf4":"transparent", borderRadius:row.bold?6:0, paddingLeft:row.bold?8:4, paddingRight:row.bold?8:4 }}>
                     <span style={{ color:row.bold?C.text:C.textSub, fontWeight:row.bold?700:400 }}>{row.label}</span>
-                    <span style={{ color:row.color, fontWeight:row.bold?700:500, fontSize:row.bold?14:13 }}>{row.value<0?"−":""}{fmtFull(Math.abs(row.value))} тг</span>
+                    <span style={{ color:row.color, fontWeight:row.bold?700:500, fontSize:row.bold?14:13 }}>{row.value==null?"—":`${row.value<0?"−":""}${fmtFull(Math.abs(row.value))} тг`}</span>
                   </div>
                 ))}
                 <div style={{ display:"flex", justifyContent:"flex-end", marginTop:12 }}>
-                  <div style={{ background:stats.profit>0?C.greenBg:C.redBg, border:`1px solid ${stats.profit>0?"#bbf7d0":"#fecaca"}`, borderRadius:8, padding:"8px 18px", color:stats.profit>0?C.green:C.red, fontSize:14, fontWeight:700 }}>Маржа: {stats.margin.toFixed(1)}%</div>
+                  <div style={{ background:stats.profit>0?C.greenBg:C.redBg, border:`1px solid ${stats.profit>0?"#bbf7d0":"#fecaca"}`, borderRadius:8, padding:"8px 18px", color:stats.profit>0?C.green:C.red, fontSize:14, fontWeight:700 }}>Маржа: {isOwner?`${stats.margin.toFixed(1)}%`:"—"}</div>
                 </div>
               </div>
             </div>

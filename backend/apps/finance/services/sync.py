@@ -6,6 +6,7 @@ from decimal import Decimal
 from django.db.models import Sum
 
 from apps.staff.models import StaffMember
+from apps.staff.services.payroll_calc import calculate_doctor_salary
 
 from ..models import DoctorRevenue, MacDentSync, PayrollCalculation
 from .macdent import MacDentClient
@@ -141,9 +142,6 @@ class FinanceSyncService:
         for row in revenues:
             staff = StaffMember.objects.get(pk=row["doctor"])
             rev = row["total"]
-            kpi = staff.kpi_threshold
-            rate_b = staff.rate_below_kpi / Decimal("100")
-            rate_a = staff.rate_above_kpi / Decimal("100")
 
             existing = PayrollCalculation.objects.filter(
                 staff_member=staff, period=period_start
@@ -155,24 +153,20 @@ class FinanceSyncService:
                 results.append(existing)
                 continue
 
-            if rev <= kpi:
-                below = rev * rate_b
-                above = Decimal("0")
-            else:
-                below = kpi * rate_b
-                above = (rev - kpi) * rate_a
+            # Единый сервис расчёта ФОТ (тот же, что в salary-preview).
+            salary = calculate_doctor_salary(staff, rev)
 
             obj, _ = PayrollCalculation.objects.update_or_create(
                 staff_member=staff,
                 period=period_start,
                 defaults={
                     "revenue_total": rev,
-                    "kpi_threshold": kpi,
+                    "kpi_threshold": staff.kpi_threshold,
                     "rate_below_kpi": staff.rate_below_kpi,
                     "rate_above_kpi": staff.rate_above_kpi,
-                    "amount_below_kpi": below,
-                    "amount_above_kpi": above,
-                    "payroll_total": below + above,
+                    "amount_below_kpi": salary["below"],
+                    "amount_above_kpi": salary["above"],
+                    "payroll_total": salary["total"],
                     "is_confirmed": False,
                 },
             )
