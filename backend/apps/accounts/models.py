@@ -19,6 +19,8 @@ class RoleTabAccess(models.Model):
 class User(AbstractUser):
     """Custom user model for future clinic membership support."""
 
+    email = models.EmailField("Email", unique=True)
+
     class Meta:
         verbose_name = "Пользователь"
         verbose_name_plural = "Пользователи"

@@ -29,9 +29,8 @@ class EmailLoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        try:
-            user = User.objects.get(email__iexact=email)
-        except User.DoesNotExist:
+        user = User.objects.filter(email__iexact=email).first()
+        if user is None:
             return Response(
                 {"detail": "Неверный email или пароль."},
                 status=status.HTTP_401_UNAUTHORIZED,
