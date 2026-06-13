@@ -376,6 +376,7 @@ def _build_report_response(report_date: date) -> dict:
                 "amount":    str(t.amount),
                 "comment":   t.comment,
                 "row_order": t.row_order,
+                "source":    t.source,
             }
             for t in sorted(
                 report.transactions.all(),
@@ -466,9 +467,13 @@ class DailyReportView(APIView):
             report.notes = data.get("notes", "")
             report.save(update_fields=["notes", "updated_at"])
 
-            # Replace all manual transactions for this report
+            # Replace only the manual rows. Imported rows (excel/macdent and
+            # legacy null source) are left untouched so reopening + resaving an
+            # imported day doesn't duplicate or drop them.
             report.transactions.filter(source="manual").delete()
 
+            # Incoming rows are always stored as manual — the client must not
+            # send back imported rows, and any source it provides is ignored.
             tx_objs = [
                 DailyTransaction(
                     report=report,
@@ -483,19 +488,22 @@ class DailyReportView(APIView):
             ]
             DailyTransaction.objects.bulk_create(tx_objs)
 
-            # Recalculate and persist balances
+            # Recalculate balances from ALL transactions of the report
+            # (manual + imported), not just the incoming payload. Otherwise the
+            # closing balance would ignore the preserved imported rows.
             opening_raw = data.get("opening_balances") or {}
+            all_tx = list(report.transactions.all())
             for account in _BALANCE_ACCOUNTS:
                 start = Decimal(str(opening_raw.get(account, 0)))
                 income = sum(
-                    tx["amount"]
-                    for tx in data["transactions"]
-                    if tx["account"] == account and tx["direction"] == "income"
+                    (t.amount for t in all_tx
+                     if t.account == account and t.direction == "income"),
+                    Decimal("0"),
                 )
                 expense = sum(
-                    tx["amount"]
-                    for tx in data["transactions"]
-                    if tx["account"] == account and tx["direction"] == "expense"
+                    (t.amount for t in all_tx
+                     if t.account == account and t.direction == "expense"),
+                    Decimal("0"),
                 )
                 DailyBalance.objects.update_or_create(
                     report=report,

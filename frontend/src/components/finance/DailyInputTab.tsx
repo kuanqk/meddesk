@@ -105,10 +105,28 @@ interface TxRow {
   comment: string;
 }
 
+// Imported (excel/macdent) row — read-only, never sent back to the server.
+interface ImportedRow {
+  direction: Direction;
+  amount: string;
+  comment: string;
+  source: string;   // "excel" | "macdent"
+}
+
 type RowsByAccount = Record<AccountSlug, TxRow[]>;
+type ImportedByAccount = Record<AccountSlug, ImportedRow[]>;
 
 function emptyRows(): RowsByAccount {
   return { kaspi_pay: [], halyk: [], cash: [] };
+}
+
+function emptyImported(): ImportedByAccount {
+  return { kaspi_pay: [], halyk: [], cash: [] };
+}
+
+// A row is editable if it's manual or a legacy row with no source.
+function isEditableSource(source?: string | null): boolean {
+  return source == null || source === "manual";
 }
 
 let _idCounter = 0;
@@ -404,6 +422,7 @@ interface AccountSectionProps {
   label: string;
   color: string;
   rows: TxRow[];
+  importedRows: ImportedRow[];
   disabled: boolean;
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -417,12 +436,16 @@ interface AccountSectionProps {
 }
 
 function AccountSection({
-  slug, label, color, rows, disabled, collapsed,
+  slug, label, color, rows, importedRows, disabled, collapsed,
   onToggleCollapse, onAddRow, onUpdateRow, onDeleteRow,
   amountRefs, commentRefs, addBtnRef, pendingFocus,
 }: AccountSectionProps) {
-  const income  = rows.filter(r => r.direction === "income").reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
-  const expense = rows.filter(r => r.direction === "expense").reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+  // Totals span editable + imported rows so the header matches server figures.
+  const sumDir = (dir: Direction) =>
+    rows.filter(r => r.direction === dir).reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+    + importedRows.filter(r => r.direction === dir).reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+  const income  = sumDir("income");
+  const expense = sumDir("expense");
   const net = income - expense;
 
   const setAmountRef = useCallback((localId: string): RefCallback<HTMLInputElement> =>
@@ -544,6 +567,43 @@ function AccountSection({
           >
             + Добавить строку
           </button>
+
+          {/* Imported (excel/macdent) rows — read-only, not editable/savable */}
+          {importedRows.length > 0 && (
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px dashed ${C.border}` }}>
+              <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 6 }}>
+                Импортировано ({importedRows.length})
+              </div>
+              {importedRows.map((row, idx) => (
+                <div
+                  key={`imp_${slug}_${idx}`}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    padding: "5px 8px", marginBottom: 4, borderRadius: 6,
+                    background: C.bg, fontSize: 12,
+                  }}
+                  title={`Источник: ${row.source} (только чтение)`}
+                >
+                  <span style={{
+                    fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+                    color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 4,
+                    padding: "1px 5px", flexShrink: 0,
+                  }}>
+                    {row.source}
+                  </span>
+                  <span style={{
+                    width: 110, textAlign: "right", flexShrink: 0, fontWeight: 600,
+                    color: row.direction === "income" ? C.green : C.red,
+                  }}>
+                    {row.direction === "income" ? "+" : "−"}{fmtFull(parseFloat(row.amount) || 0)}
+                  </span>
+                  <span style={{ flex: 1, color: C.textSub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {row.comment || "—"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -595,6 +655,7 @@ export default function DailyInputTab({ initialDate }: DailyInputTabProps) {
 
   // ── form state ─────────────────────────────────────────────────────────────
   const [rows, setRows] = useState<RowsByAccount>(emptyRows());
+  const [readOnlyRows, setReadOnlyRows] = useState<ImportedByAccount>(emptyImported());
   const [opening, setOpening] = useState<ReportOpeningBalances>({ kaspi_pay: "0", halyk: "0", cash: "0" });
   const [notes, setNotes] = useState("");
   const [isClosed, setIsClosed] = useState(false);
@@ -656,19 +717,31 @@ export default function DailyInputTab({ initialDate }: DailyInputTabProps) {
       setClosedAt(data.closed_at);
 
       const newRows = emptyRows();
+      const newImported = emptyImported();
       for (const tx of data.transactions) {
-        newRows[tx.account].push({
-          localId: newId(),
-          direction: tx.direction,
-          amount:  tx.amount.replace(/\.00$/, ""),
-          comment: tx.comment,
-        });
+        if (isEditableSource(tx.source)) {
+          newRows[tx.account].push({
+            localId: newId(),
+            direction: tx.direction,
+            amount:  tx.amount.replace(/\.00$/, ""),
+            comment: tx.comment,
+          });
+        } else {
+          // excel/macdent → read-only, shown separately, never re-sent
+          newImported[tx.account].push({
+            direction: tx.direction,
+            amount:  tx.amount.replace(/\.00$/, ""),
+            comment: tx.comment,
+            source:  tx.source as string,
+          });
+        }
       }
       // Always ensure ≥1 empty row per account for easy entry
       for (const acc of ACCOUNTS) {
         if (newRows[acc.slug].length === 0) newRows[acc.slug].push(emptyRow());
       }
       setRows(newRows);
+      setReadOnlyRows(newImported);
       setIsDirty(false);
     } catch {
       toast("Не удалось загрузить данные за этот день", "error");
@@ -697,24 +770,26 @@ export default function DailyInputTab({ initialDate }: DailyInputTabProps) {
     const result = {} as Record<AccountSlug, number>;
     for (const acc of ACCOUNTS) {
       const open = parseFloat(opening[acc.slug]) || 0;
-      const inc  = rows[acc.slug].filter(r => r.direction === "income").reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
-      const exp  = rows[acc.slug].filter(r => r.direction === "expense").reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+      // Closing balance spans editable + imported rows (mirrors server calc).
+      const all = [...rows[acc.slug], ...readOnlyRows[acc.slug]];
+      const inc  = all.filter(r => r.direction === "income").reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+      const exp  = all.filter(r => r.direction === "expense").reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
       result[acc.slug] = open + inc - exp;
     }
     return result;
-  }, [rows, opening]);
+  }, [rows, readOnlyRows, opening]);
 
   const summary = useMemo(() => {
     let income = 0, expenses = 0;
     for (const acc of ACCOUNTS) {
-      for (const r of rows[acc.slug]) {
+      for (const r of [...rows[acc.slug], ...readOnlyRows[acc.slug]]) {
         const amt = parseFloat(r.amount) || 0;
         if (r.direction === "income")  income   += amt;
         if (r.direction === "expense") expenses += amt;
       }
     }
     return { income, expenses, profit: income - expenses };
-  }, [rows]);
+  }, [rows, readOnlyRows]);
 
   // ── row mutations ──────────────────────────────────────────────────────────
   const updateRow = useCallback((acc: AccountSlug, localId: string, patch: Partial<TxRow>) => {
@@ -1047,6 +1122,7 @@ export default function DailyInputTab({ initialDate }: DailyInputTabProps) {
             label={acc.label}
             color={acc.color}
             rows={rows[acc.slug]}
+            importedRows={readOnlyRows[acc.slug]}
             disabled={disabled}
             collapsed={collapsed.has(acc.slug)}
             onToggleCollapse={() =>

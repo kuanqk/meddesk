@@ -42,6 +42,9 @@ export interface ReportTransaction {
   amount: string;
   comment: string;
   row_order: number;
+  // Source of the row: "manual" (or null for legacy) is editable;
+  // "excel"/"macdent" are imported and read-only. Set by the server on GET.
+  source?: string | null;
 }
 
 export interface ReportOpeningBalances {
@@ -63,7 +66,9 @@ export interface DailyReportResponse {
 
 export interface DailyReportSavePayload {
   date: string;
-  transactions: Omit<ReportTransaction, "id">[];
+  // Only editable (manual) rows are sent; the server always stores them as
+  // "manual", so source is intentionally excluded from the payload.
+  transactions: Omit<ReportTransaction, "id" | "source">[];
   opening_balances: ReportOpeningBalances;
   notes: string;
 }
