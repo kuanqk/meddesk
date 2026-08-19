@@ -1,6 +1,33 @@
 import { FormEvent, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 
+/**
+ * Превращает ошибку логина в понятное сообщение.
+ * Раньше любой сбой (сеть, 502, DisallowedHost) показывался как
+ * «Неверный логин или пароль», что маскировало реальные проблемы.
+ */
+function loginErrorMessage(err: unknown): string {
+  const e = err as {
+    response?: { status?: number; data?: { detail?: string } };
+  };
+
+  // Ответа нет вовсе — сеть, CORS, 502/недоступный сервер.
+  if (!e.response) {
+    return "Сервер недоступен. Проверьте соединение и попробуйте ещё раз.";
+  }
+
+  const { status, data } = e.response;
+  const detail = data?.detail;
+
+  if (status === 401) return detail ?? "Неверный email или пароль.";
+  if (status === 429)
+    return "Слишком много попыток. Подождите минуту и попробуйте снова.";
+  if (status === 400)
+    return detail ?? "Некорректный запрос. Обратитесь к администратору.";
+  if (status && status >= 500) return "Ошибка сервера. Попробуйте позже.";
+  return detail ?? "Не удалось войти. Попробуйте ещё раз.";
+}
+
 export default function LoginPage() {
   const { login } = useAuth();
   const [email, setEmail] = useState("");
@@ -14,8 +41,8 @@ export default function LoginPage() {
     setIsSubmitting(true);
     try {
       await login({ email: email.trim(), password });
-    } catch {
-      setError("Неверный логин или пароль");
+    } catch (err) {
+      setError(loginErrorMessage(err));
     } finally {
       setIsSubmitting(false);
     }
