@@ -1,5 +1,5 @@
-import { useEffect, useState, useMemo } from "react";
-import { fetchSummary, fetchExpenses, fetchBalances, downloadIncomeXlsx } from "../api/finance";
+import { useEffect, useState, useMemo, useRef } from "react";
+import { fetchSummary, fetchExpenses, fetchBalances, downloadIncomeXlsx, importExcel } from "../api/finance";
 import type { MonthlySummary, ExpenseCategory, DailyBalance } from "../types/finance";
 import { useAuth } from "../context/AuthContext";
 import DailyInputTab from "../components/finance/DailyInputTab";
@@ -177,7 +177,8 @@ const PERIODS = [
 ];
 
 export default function FinancePage({ onBack }: { onBack: () => void }) {
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
+  const isOwner = user?.role === "owner";
   const [activeTab, setActiveTab] = useState<FinanceTab>("overview");
   const [period, setPeriod] = useState(6);
   const [summary, setSummary] = useState<MonthlySummary[]>([]);
@@ -196,6 +197,38 @@ export default function FinancePage({ onBack }: { onBack: () => void }) {
       setError("Не удалось выгрузить XLSX");
     } finally {
       setExporting(false);
+    }
+  };
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file
+    if (!file) return;
+    setImporting(true);
+    setError(null);
+    setImportMsg(null);
+    try {
+      const res = await importExcel(file);
+      const range = res.date_range ? ` (${res.date_range[0]} — ${res.date_range[1]})` : "";
+      setImportMsg(
+        `Импортировано дней: ${res.imported_days}${range}, транзакций: ${res.transactions_saved}. ` +
+        `Пропущено (уже были): ${res.skipped_days}.`,
+      );
+      // перечитать сводку, чтобы новые месяцы появились сразу
+      const [s, ex, b] = await Promise.all([
+        fetchSummary(fromMonth, toMonth),
+        fetchExpenses(fromMonth, toMonth),
+        fetchBalances(balFrom, balTo),
+      ]);
+      setSummary(s); setExpenses(ex); setBalances(b);
+    } catch {
+      setError("Не удалось импортировать файл. Проверьте формат (квартальная кассовая книга).");
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -361,12 +394,44 @@ export default function FinancePage({ onBack }: { onBack: () => void }) {
           <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 8 }}>
             {monthLabel(fromMonth)} — {monthLabel(toMonth)}
           </span>
+          {isOwner && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx"
+                onChange={handleImportFile}
+                style={{ display: "none" }}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={importing}
+                title="Загрузить квартальный xlsx кассовой книги (июль/август и др.)"
+                style={{
+                  marginLeft: "auto",
+                  background: C.surface,
+                  color: C.textSub,
+                  border: `1px solid ${C.border2}`,
+                  borderRadius: 20,
+                  padding: "5px 16px",
+                  cursor: importing ? "default" : "pointer",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  fontFamily: "inherit",
+                  opacity: importing ? 0.6 : 1,
+                  transition: "all 0.15s",
+                }}
+              >
+                {importing ? "Импорт…" : "⬆ Загрузить XLSX"}
+              </button>
+            </>
+          )}
           <button
             onClick={handleExport}
             disabled={exporting}
             title="Выгрузить доходы по всем месяцам в XLSX"
             style={{
-              marginLeft: "auto",
+              marginLeft: isOwner ? 0 : "auto",
               background: C.surface,
               color: C.textSub,
               border: `1px solid ${C.border2}`,
@@ -383,6 +448,11 @@ export default function FinancePage({ onBack }: { onBack: () => void }) {
             {exporting ? "Выгрузка…" : "⬇ Выгрузить в XLSX"}
           </button>
         </div>
+        {importMsg && (
+          <div style={{ background: C.greenBg, border: `1px solid #bbf7d0`, borderRadius: 10, padding: "10px 16px", marginBottom: 20, color: "#166534", fontSize: 13 }}>
+            ✅ {importMsg}
+          </div>
+        )}
 
         {error && (
           <div style={{ background: C.redBg, border: `1px solid #fecaca`, borderRadius: 10, padding: "12px 16px", marginBottom: 20, color: C.red, fontSize: 13 }}>

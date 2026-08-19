@@ -928,3 +928,66 @@ class DoctorsRevenueExportView(APIView):
         )
         wb.save(response)
         return response
+
+
+class ExcelImportView(APIView):
+    """POST /api/v1/finance/import-excel/  (multipart: file=<xlsx>)
+
+    Импорт дневных отчётов из квартального xlsx кассовой книги.
+    Существующие дни не перезаписываются (пропускаются) — добавляются
+    только новые. ?dry_run=1 — предпросмотр без записи. Owner-only.
+    """
+
+    permission_classes = [require_tab("finance")]
+
+    def post(self, request):
+        if not _is_owner(request.user):
+            return Response(
+                {"error": "Только владелец может импортировать данные."}, status=403
+            )
+
+        upload = request.FILES.get("file")
+        if upload is None:
+            return Response({"error": "Файл не передан (поле 'file')."}, status=400)
+
+        dry_run = str(request.query_params.get("dry_run", "")).lower() in ("1", "true", "yes")
+
+        import openpyxl
+        from apps.finance.management.commands.import_excel import parse_sheet, save_sheet
+
+        try:
+            wb = openpyxl.load_workbook(upload, read_only=True, data_only=True)
+        except Exception as e:
+            return Response({"error": f"Не удалось открыть файл: {e}"}, status=400)
+
+        imported: list[str] = []
+        skipped: list[dict] = []
+        tx_total = 0
+        for ws in wb.worksheets:
+            try:
+                parsed = parse_sheet(ws)
+            except Exception:
+                continue
+            if parsed.get("date") is None:
+                continue  # не лист-день
+            stats = save_sheet(parsed, source_file=upload.name, dry_run=dry_run)
+            if stats.get("skipped_reason"):
+                skipped.append({
+                    "date": str(stats["date"]) if stats["date"] else ws.title,
+                    "reason": stats["skipped_reason"],
+                })
+            else:
+                imported.append(str(stats["date"]))
+                tx_total += stats["tx_saved"]
+        wb.close()
+
+        imported_dates = sorted(imported)
+        return Response({
+            "dry_run": dry_run,
+            "imported_days": len(imported_dates),
+            "imported_dates": imported_dates,
+            "date_range": [imported_dates[0], imported_dates[-1]] if imported_dates else None,
+            "transactions_saved": tx_total,
+            "skipped_days": len(skipped),
+            "skipped": skipped[:100],
+        })

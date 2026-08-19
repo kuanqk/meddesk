@@ -94,6 +94,27 @@ export async function fetchDoctorsRevenue(from: string, to: string): Promise<Doc
   return data;
 }
 
+export interface ExcelImportResult {
+  dry_run: boolean;
+  imported_days: number;
+  imported_dates: string[];
+  date_range: [string, string] | null;
+  transactions_saved: number;
+  skipped_days: number;
+  skipped: { date: string; reason: string }[];
+}
+
+/** Загружает квартальный xlsx кассовой книги и импортирует новые дни. */
+export async function importExcel(file: File, dryRun = false): Promise<ExcelImportResult> {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await api.post<ExcelImportResult>("/finance/import-excel/", form, {
+    params: dryRun ? { dry_run: 1 } : undefined,
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
+}
+
 /** Скачивает XLSX со сводкой доходов кассы по всем месяцам. */
 export async function downloadIncomeXlsx(): Promise<void> {
   const response = await api.get("/finance/income/export/", {

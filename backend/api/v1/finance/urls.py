@@ -7,6 +7,7 @@ from .views import (
     DailyReportView,
     DoctorsRevenueExportView,
     DoctorsRevenueView,
+    ExcelImportView,
     FinanceBalancesView,
     FinanceDailyView,
     FinanceExpensesView,
@@ -21,6 +22,7 @@ from .views import (
 urlpatterns = [
     path("summary/",                    FinanceSummaryView.as_view(),         name="finance-summary"),
     path("income/export/",              IncomeExportView.as_view(),           name="finance-income-export"),
+    path("import-excel/",               ExcelImportView.as_view(),            name="finance-import-excel"),
     path("daily/",                      FinanceDailyView.as_view(),           name="finance-daily"),
     path("expenses/",                   FinanceExpensesView.as_view(),        name="finance-expenses"),
     path("balances/",                   FinanceBalancesView.as_view(),        name="finance-balances"),
