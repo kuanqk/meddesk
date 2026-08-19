@@ -69,6 +69,24 @@ export async function fetchClosedDates(month: string): Promise<string[]> {
   return data;
 }
 
+/** Скачивает XLSX с доходом врачей за указанный период. */
+export async function downloadDoctorsRevenueXlsx(from: string, to: string): Promise<void> {
+  const response = await api.get("/finance/doctors-revenue/export/", {
+    params: { from, to },
+    responseType: "blob",
+  });
+  const url = window.URL.createObjectURL(response.data as Blob);
+  const link = document.createElement("a");
+  link.href = url;
+  const disposition = response.headers["content-disposition"] as string | undefined;
+  const match = disposition?.match(/filename="?([^"]+)"?/);
+  link.download = match?.[1] ?? `doctors_revenue_${from}_${to}.xlsx`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
 export async function fetchDoctorsRevenue(from: string, to: string): Promise<DoctorRevenueStats[]> {
   const { data } = await api.get<DoctorRevenueStats[]>("/finance/doctors-revenue/", {
     params: { from, to },

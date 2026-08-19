@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchDoctorsRevenue } from "../../api/finance";
+import { fetchDoctorsRevenue, downloadDoctorsRevenueXlsx } from "../../api/finance";
 import type { DoctorRevenueStats } from "../../types/finance";
 
 // ── design tokens (same as FinancePage) ───────────────────────────────────────
@@ -58,6 +58,19 @@ export default function DoctorsTab() {
   const [rows, setRows] = useState<DoctorRevenueStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async () => {
+    setExporting(true);
+    setError(null);
+    try {
+      await downloadDoctorsRevenueXlsx(from, to);
+    } catch {
+      setError("Не удалось выгрузить XLSX");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const load = useCallback(() => {
     setLoading(true);
@@ -100,6 +113,26 @@ export default function DoctorsTab() {
         <input type="date" value={from} max={to} onChange={e => setFrom(e.target.value)} style={inputStyle} />
         <span style={{ color: C.textMuted }}>—</span>
         <input type="date" value={to} min={from} onChange={e => setTo(e.target.value)} style={inputStyle} />
+        <button
+          onClick={handleExport}
+          disabled={exporting || loading}
+          title="Выгрузить доход врачей за период в XLSX"
+          style={{
+            marginLeft: "auto",
+            background: C.surface,
+            border: `1px solid ${C.border2}`,
+            borderRadius: 8,
+            padding: "6px 14px",
+            fontSize: 13,
+            fontWeight: 600,
+            fontFamily: "inherit",
+            color: C.text,
+            cursor: exporting || loading ? "default" : "pointer",
+            opacity: exporting || loading ? 0.6 : 1,
+          }}
+        >
+          {exporting ? "Выгрузка…" : "⬇ Выгрузить в XLSX"}
+        </button>
       </div>
 
       {error && (

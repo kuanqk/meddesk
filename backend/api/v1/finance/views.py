@@ -836,3 +836,95 @@ class IncomeExportView(APIView):
         )
         wb.save(response)
         return response
+
+
+class DoctorsRevenueExportView(APIView):
+    """GET /api/v1/finance/doctors-revenue/export/?from=YYYY-MM-DD&to=YYYY-MM-DD
+
+    XLSX с доходом врачей (DoctorRevenue) за указанный период: строка на
+    врача (выручка, дни, выручка/день, доля) + строка итога.
+    """
+
+    permission_classes = [require_tab("finance")]
+
+    def get(self, request):
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+        try:
+            date_from = _parse_date(request.query_params.get("from", ""))
+            date_to = _parse_date(request.query_params.get("to", ""))
+        except ValueError:
+            return Response({"error": "Use YYYY-MM-DD format"}, status=400)
+
+        rows = (
+            DoctorRevenue.objects
+            .filter(date__range=[date_from, date_to])
+            .values("doctor__name")
+            .annotate(
+                revenue_total=Sum("revenue"),
+                days_worked=Count("date", distinct=True),
+            )
+            .order_by("-revenue_total")
+        )
+        grand_total = sum((r["revenue_total"] or Decimal("0")) for r in rows) or Decimal("0")
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Доход врачей"
+
+        ws.append([f"Доход врачей за период {date_from:%d.%m.%Y} — {date_to:%d.%m.%Y}"])
+        ws.append([])
+
+        headers = ["Врач", "Выручка", "Дней", "Выручка/день", "Доля, %"]
+        header_row = ws.max_row + 1
+        ws.append(headers)
+
+        header_fill = PatternFill("solid", fgColor="2563EB")
+        header_font = Font(bold=True, color="FFFFFF")
+        thin = Side(style="thin", color="D1CEC6")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        money_fmt = "# ##0"
+
+        ws.cell(row=1, column=1).font = Font(bold=True, size=13)
+        for col in range(1, len(headers) + 1):
+            c = ws.cell(row=header_row, column=col)
+            c.fill = header_fill
+            c.font = header_font
+            c.alignment = Alignment(horizontal="center")
+            c.border = border
+
+        for r in rows:
+            total = r["revenue_total"] or Decimal("0")
+            days = r["days_worked"] or 0
+            per_day = (total / days) if days else Decimal("0")
+            share = float(total / grand_total * 100) if grand_total else 0.0
+            ws.append([r["doctor__name"], total, days, per_day, round(share, 1)])
+            rr = ws.max_row
+            for col in range(1, len(headers) + 1):
+                cell = ws.cell(row=rr, column=col)
+                cell.border = border
+                if col in (2, 4):
+                    cell.number_format = money_fmt
+
+        ws.append(["ИТОГО", grand_total, "", "", 100.0])
+        rr = ws.max_row
+        for col in range(1, len(headers) + 1):
+            cell = ws.cell(row=rr, column=col)
+            cell.font = Font(bold=True)
+            cell.border = border
+            if col in (2, 4):
+                cell.number_format = money_fmt
+
+        for i, w in enumerate([32, 16, 8, 16, 10], start=1):
+            ws.column_dimensions[chr(64 + i)].width = w
+        ws.freeze_panes = f"A{header_row + 1}"
+
+        response = HttpResponse(
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = (
+            f'attachment; filename="doctors_revenue_{date_from:%Y%m%d}_{date_to:%Y%m%d}.xlsx"'
+        )
+        wb.save(response)
+        return response
