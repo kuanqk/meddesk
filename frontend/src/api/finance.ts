@@ -115,9 +115,11 @@ export async function importExcel(file: File, dryRun = false): Promise<ExcelImpo
   return data;
 }
 
-/** Скачивает XLSX со сводкой доходов кассы по всем месяцам. */
-export async function downloadIncomeXlsx(): Promise<void> {
+/** Скачивает XLSX со сводкой доходов кассы. from/to (YYYY-MM) опциональны —
+ * без них выгружается вся история. */
+export async function downloadIncomeXlsx(from?: string, to?: string): Promise<void> {
   const response = await api.get("/finance/income/export/", {
+    params: from && to ? { from, to } : undefined,
     responseType: "blob",
   });
   const url = window.URL.createObjectURL(response.data as Blob);

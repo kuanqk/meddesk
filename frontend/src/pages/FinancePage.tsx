@@ -192,7 +192,7 @@ export default function FinancePage({ onBack }: { onBack: () => void }) {
     setExporting(true);
     setError(null);
     try {
-      await downloadIncomeXlsx();
+      await downloadIncomeXlsx(fromMonth, toMonth);
     } catch {
       setError("Не удалось выгрузить XLSX");
     } finally {
@@ -429,7 +429,7 @@ export default function FinancePage({ onBack }: { onBack: () => void }) {
           <button
             onClick={handleExport}
             disabled={exporting}
-            title="Выгрузить доходы по всем месяцам в XLSX"
+            title="Выгрузить доходы за выбранный период в XLSX"
             style={{
               marginLeft: isOwner ? 0 : "auto",
               background: C.surface,

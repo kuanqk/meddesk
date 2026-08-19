@@ -742,10 +742,11 @@ class PayrollUnconfirmView(APIView):
 
 
 class IncomeExportView(APIView):
-    """GET /api/v1/finance/income/export/
+    """GET /api/v1/finance/income/export/?from=YYYY-MM&to=YYYY-MM
 
-    Отдаёт XLSX со сводкой дохода кассы (P&L) по всем месяцам за всю
-    историю: доход, расходы, прибыль + строка итога.
+    Отдаёт XLSX со сводкой дохода кассы (P&L) по месяцам: доход, расходы,
+    прибыль + строка итога. from/to опциональны — без них берётся вся
+    история (от первого до последнего дневного отчёта).
     """
 
     permission_classes = [require_tab("finance")]
@@ -758,8 +759,18 @@ class IncomeExportView(APIView):
         if not bounds["mn"]:
             return Response({"error": "Нет данных для выгрузки."}, status=404)
 
-        date_from = bounds["mn"].replace(day=1)
-        date_to = _month_end(bounds["mx"])
+        qp = request.query_params
+        try:
+            date_from = (
+                _parse_month(qp["from"]).replace(day=1)
+                if qp.get("from") else bounds["mn"].replace(day=1)
+            )
+            date_to = (
+                _month_end(_parse_month(qp["to"]))
+                if qp.get("to") else _month_end(bounds["mx"])
+            )
+        except ValueError:
+            return Response({"error": "Use YYYY-MM format"}, status=400)
 
         def monthly_sum(direction: str) -> dict:
             qs = (
@@ -832,7 +843,7 @@ class IncomeExportView(APIView):
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         response["Content-Disposition"] = (
-            f'attachment; filename="income_by_month_{date.today():%Y%m%d}.xlsx"'
+            f'attachment; filename="income_by_month_{date_from:%Y%m}_{date_to:%Y%m}.xlsx"'
         )
         wb.save(response)
         return response
