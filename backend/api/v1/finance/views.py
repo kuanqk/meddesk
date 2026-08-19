@@ -80,6 +80,19 @@ def _all_data_bounds() -> tuple[date, date]:
     return today.replace(day=1), _month_end(today)
 
 
+def _doctor_revenue_bounds() -> tuple[date, date]:
+    """Границы всей истории выручки врачей (DoctorRevenue), день-в-день.
+
+    Если данных нет — текущий день. Используется в режиме «Всё» на вкладке
+    «Врачи», когда from/to не заданы.
+    """
+    b = DoctorRevenue.objects.aggregate(mn=Min("date"), mx=Max("date"))
+    if b["mn"]:
+        return b["mn"], b["mx"]
+    today = date.today()
+    return today, today
+
+
 # ── expense keyword categories ─────────────────────────────────────────────────
 
 EXPENSE_CATEGORIES = [
@@ -323,9 +336,11 @@ class DoctorsRevenueView(APIView):
     permission_classes = [require_tab("finance")]
 
     def get(self, request):
+        qp = request.query_params
+        default_from, default_to = _doctor_revenue_bounds()
         try:
-            date_from = _parse_date(request.query_params.get("from", ""))
-            date_to = _parse_date(request.query_params.get("to", ""))
+            date_from = _parse_date(qp["from"]) if qp.get("from") else default_from
+            date_to = _parse_date(qp["to"]) if qp.get("to") else default_to
         except ValueError:
             return Response({"error": "Use YYYY-MM-DD format"}, status=400)
 
@@ -870,9 +885,11 @@ class DoctorsRevenueExportView(APIView):
         from openpyxl import Workbook
         from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
+        qp = request.query_params
+        default_from, default_to = _doctor_revenue_bounds()
         try:
-            date_from = _parse_date(request.query_params.get("from", ""))
-            date_to = _parse_date(request.query_params.get("to", ""))
+            date_from = _parse_date(qp["from"]) if qp.get("from") else default_from
+            date_to = _parse_date(qp["to"]) if qp.get("to") else default_to
         except ValueError:
             return Response({"error": "Use YYYY-MM-DD format"}, status=400)
 

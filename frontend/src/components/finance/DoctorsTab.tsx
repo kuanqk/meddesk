@@ -114,6 +114,22 @@ export default function DoctorsTab() {
         <span style={{ color: C.textMuted }}>—</span>
         <input type="date" value={to} min={from} onChange={e => setTo(e.target.value)} style={inputStyle} />
         <button
+          onClick={() => { setFrom(""); setTo(""); }}
+          title="Показать доход врачей за всю историю"
+          style={{
+            ...inputStyle,
+            fontWeight: 600,
+            background: from === "" && to === "" ? C.accent : C.surface,
+            color: from === "" && to === "" ? "#fff" : C.textSub,
+            border: `1px solid ${from === "" && to === "" ? C.accent : C.border2}`,
+          }}
+        >
+          Всё
+        </button>
+        {from === "" && to === "" && (
+          <span style={{ fontSize: 12, color: C.textMuted }}>весь период</span>
+        )}
+        <button
           onClick={handleExport}
           disabled={exporting || loading}
           title="Выгрузить доход врачей за период в XLSX"
