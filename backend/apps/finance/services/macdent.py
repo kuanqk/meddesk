@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 
 import requests
 from django.conf import settings
@@ -71,10 +72,51 @@ class MacDentClient:
     # ── Платежи ────────────────────────────────────────────────────────────
 
     def get_payments(self, date_from: str, date_to: str) -> list:
-        return self._post_all_pages("payment", "find", {
-            "date_from": date_from,
-            "date_to": date_to,
-        }, result_key="pays")
+        """Платежи за период [date_from; date_to] (обе даты ISO YYYY-MM-DD).
+
+        ВНИМАНИЕ: payment/find НЕ фильтрует по датам на сервере — при любых
+        параметрах он отдаёт всю историю (проверено эмпирически). Зато список
+        отсортирован по дате убыванию (свежие свер­ху), постранично. Поэтому
+        фильтруем на клиенте и прекращаем пагинацию, как только страница
+        уходит раньше date_from — дневной синк берёт 1-2 страницы вместо всех.
+        """
+        d_from = datetime.strptime(date_from, "%Y-%m-%d").date()
+        d_to = datetime.strptime(date_to, "%Y-%m-%d").date()
+
+        results: list = []
+        page = 1
+        while True:
+            data = self._post("payment", "find", {"page": page})
+            if not data:
+                break
+            items = data.get("pays", data.get("data", []))
+            if not items:
+                break
+
+            page_min = None
+            for p in items:
+                try:
+                    d = datetime.strptime(p.get("date", ""), "%d.%m.%Y").date()
+                except ValueError:
+                    continue
+                page_min = d if page_min is None else min(page_min, d)
+                if d_from <= d <= d_to:
+                    results.append(p)
+
+            max_page = int(data.get("maxPage", 1) or 1)
+            # Страницы по убыванию даты: если самая ранняя дата страницы уже
+            # раньше начала периода — дальше только старее, выходим.
+            if page_min is not None and page_min < d_from:
+                break
+            if page >= max_page:
+                break
+            page += 1
+
+        logger.info(
+            "MacDent get_payments %s..%s: %d платежей (просмотрено %d стр.)",
+            date_from, date_to, len(results), page,
+        )
+        return results
 
     def get_payment_detail(self, payment_id) -> dict:
         return self._post("payment", "get_detailed", {"id": payment_id})
