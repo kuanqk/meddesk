@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { fetchSummary, fetchExpenses, fetchBalances } from "../api/finance";
+import { fetchSummary, fetchExpenses, fetchBalances, downloadIncomeXlsx } from "../api/finance";
 import type { MonthlySummary, ExpenseCategory, DailyBalance } from "../types/finance";
 import { useAuth } from "../context/AuthContext";
 import DailyInputTab from "../components/finance/DailyInputTab";
@@ -185,6 +185,19 @@ export default function FinancePage({ onBack }: { onBack: () => void }) {
   const [balances, setBalances] = useState<DailyBalance[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async () => {
+    setExporting(true);
+    setError(null);
+    try {
+      await downloadIncomeXlsx();
+    } catch {
+      setError("Не удалось выгрузить XLSX");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const fromMonth = monthsAgo(period - 1);
   const toMonth = currentMonth();
@@ -348,6 +361,27 @@ export default function FinancePage({ onBack }: { onBack: () => void }) {
           <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 8 }}>
             {monthLabel(fromMonth)} — {monthLabel(toMonth)}
           </span>
+          <button
+            onClick={handleExport}
+            disabled={exporting}
+            title="Выгрузить доходы по всем месяцам в XLSX"
+            style={{
+              marginLeft: "auto",
+              background: C.surface,
+              color: C.textSub,
+              border: `1px solid ${C.border2}`,
+              borderRadius: 20,
+              padding: "5px 16px",
+              cursor: exporting ? "default" : "pointer",
+              fontSize: 12,
+              fontWeight: 600,
+              fontFamily: "inherit",
+              opacity: exporting ? 0.6 : 1,
+              transition: "all 0.15s",
+            }}
+          >
+            {exporting ? "Выгрузка…" : "⬇ Выгрузить в XLSX"}
+          </button>
         </div>
 
         {error && (

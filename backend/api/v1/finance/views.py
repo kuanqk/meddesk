@@ -4,8 +4,9 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from django.db import transaction as db_transaction
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, Max, Min, Q, Sum
 from django.db.models.functions import TruncMonth
+from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -738,3 +739,100 @@ class PayrollUnconfirmView(APIView):
         payroll.save(update_fields=["is_confirmed", "confirmed_by", "confirmed_at"])
 
         return Response(PayrollCalculationSerializer(payroll).data)
+
+
+class IncomeExportView(APIView):
+    """GET /api/v1/finance/income/export/
+
+    Отдаёт XLSX со сводкой дохода кассы (P&L) по всем месяцам за всю
+    историю: доход, расходы, прибыль + строка итога.
+    """
+
+    permission_classes = [require_tab("finance")]
+
+    def get(self, request):
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+        bounds = DailyReport.objects.aggregate(mn=Min("date"), mx=Max("date"))
+        if not bounds["mn"]:
+            return Response({"error": "Нет данных для выгрузки."}, status=404)
+
+        date_from = bounds["mn"].replace(day=1)
+        date_to = _month_end(bounds["mx"])
+
+        def monthly_sum(direction: str) -> dict:
+            qs = (
+                DailyTransaction.objects
+                .filter(direction=direction, report__date__range=[date_from, date_to])
+                .annotate(month=TruncMonth("report__date"))
+                .values("month")
+                .annotate(total=Sum("amount"))
+            )
+            return {
+                (row["month"].date() if hasattr(row["month"], "date") else row["month"]): row["total"]
+                for row in qs
+            }
+
+        income_map = monthly_sum("income")
+        expense_map = monthly_sum("expense")
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Доходы по месяцам"
+
+        headers = ["Месяц", "Доход", "Расходы", "Прибыль"]
+        ws.append(headers)
+
+        header_fill = PatternFill("solid", fgColor="2563EB")
+        header_font = Font(bold=True, color="FFFFFF")
+        thin = Side(style="thin", color="D1CEC6")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        money_fmt = "# ##0"
+
+        for col, _ in enumerate(headers, start=1):
+            c = ws.cell(row=1, column=col)
+            c.fill = header_fill
+            c.font = header_font
+            c.alignment = Alignment(horizontal="center")
+            c.border = border
+
+        total_income = total_expense = Decimal("0")
+        for month_start in _iter_months(date_from, date_to):
+            income = income_map.get(month_start, Decimal("0")) or Decimal("0")
+            expenses = expense_map.get(month_start, Decimal("0")) or Decimal("0")
+            profit = income - expenses
+            total_income += income
+            total_expense += expenses
+
+            ws.append([month_start.strftime("%Y-%m"), income, expenses, profit])
+            r = ws.max_row
+            for col in range(1, 5):
+                cell = ws.cell(row=r, column=col)
+                cell.border = border
+                if col >= 2:
+                    cell.number_format = money_fmt
+
+        # ── строка итога ────────────────────────────────────────────────────
+        ws.append(["ИТОГО", total_income, total_expense, total_income - total_expense])
+        r = ws.max_row
+        for col in range(1, 5):
+            cell = ws.cell(row=r, column=col)
+            cell.font = Font(bold=True)
+            cell.border = border
+            if col >= 2:
+                cell.number_format = money_fmt
+
+        widths = [12, 16, 16, 16]
+        for i, w in enumerate(widths, start=1):
+            ws.column_dimensions[chr(64 + i)].width = w
+        ws.freeze_panes = "A2"
+
+        response = HttpResponse(
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = (
+            f'attachment; filename="income_by_month_{date.today():%Y%m%d}.xlsx"'
+        )
+        wb.save(response)
+        return response

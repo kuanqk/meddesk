@@ -76,6 +76,23 @@ export async function fetchDoctorsRevenue(from: string, to: string): Promise<Doc
   return data;
 }
 
+/** Скачивает XLSX со сводкой доходов кассы по всем месяцам. */
+export async function downloadIncomeXlsx(): Promise<void> {
+  const response = await api.get("/finance/income/export/", {
+    responseType: "blob",
+  });
+  const url = window.URL.createObjectURL(response.data as Blob);
+  const link = document.createElement("a");
+  link.href = url;
+  const disposition = response.headers["content-disposition"] as string | undefined;
+  const match = disposition?.match(/filename="?([^"]+)"?/);
+  link.download = match?.[1] ?? "income_by_month.xlsx";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
 export async function fetchPayroll(month: string): Promise<PayrollCalculation[]> {
   const { data } = await api.get<PayrollCalculation[]>("/finance/payroll/", {
     params: { month },
