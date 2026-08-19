@@ -67,6 +67,19 @@ def _iter_months(start: date, end: date):
         cur = _next_month(cur)
 
 
+def _all_data_bounds() -> tuple[date, date]:
+    """Границы всей истории: (первое-число-месяца, конец-месяца) по DailyReport.
+
+    Если данных нет — текущий месяц. Используется, когда from/to не заданы
+    (режим «Всё»).
+    """
+    b = DailyReport.objects.aggregate(mn=Min("date"), mx=Max("date"))
+    if b["mn"]:
+        return b["mn"].replace(day=1), _month_end(b["mx"])
+    today = date.today()
+    return today.replace(day=1), _month_end(today)
+
+
 # ── expense keyword categories ─────────────────────────────────────────────────
 
 EXPENSE_CATEGORIES = [
@@ -90,16 +103,13 @@ class FinanceSummaryView(APIView):
     permission_classes = [require_tab("finance")]
 
     def get(self, request):
+        qp = request.query_params
+        default_from, default_to = _all_data_bounds()
         try:
-            date_from = _parse_month(request.query_params["from"]) if "from" in request.query_params \
-                else date.today().replace(day=1)
-            date_to_month = _parse_month(request.query_params["to"]) if "to" in request.query_params \
-                else date.today().replace(day=1)
+            date_from = _parse_month(qp["from"]).replace(day=1) if qp.get("from") else default_from
+            date_to = _month_end(_parse_month(qp["to"])) if qp.get("to") else default_to
         except ValueError:
             return Response({"error": "Use YYYY-MM format"}, status=400)
-
-        date_from = date_from.replace(day=1)
-        date_to = _month_end(date_to_month)
 
         # ── per-month income / expense sums ───────────────────────────────────
         def monthly_sum(direction: str) -> dict:
@@ -221,15 +231,13 @@ class FinanceExpensesView(APIView):
     permission_classes = [require_tab("finance")]
 
     def get(self, request):
+        qp = request.query_params
+        default_from, default_to = _all_data_bounds()
         try:
-            date_from = _parse_month(request.query_params["from"]).replace(day=1) \
-                if "from" in request.query_params else date.today().replace(day=1)
-            date_to_month = _parse_month(request.query_params["to"]) \
-                if "to" in request.query_params else date.today().replace(day=1)
+            date_from = _parse_month(qp["from"]).replace(day=1) if qp.get("from") else default_from
+            date_to = _month_end(_parse_month(qp["to"])) if qp.get("to") else default_to
         except ValueError:
             return Response({"error": "Use YYYY-MM format"}, status=400)
-
-        date_to = _month_end(date_to_month)
 
         base_qs = DailyTransaction.objects.filter(
             direction="expense",

@@ -174,6 +174,7 @@ const PERIODS = [
   { label: "3 мес", months: 3 },
   { label: "6 мес", months: 6 },
   { label: "1 год", months: 12 },
+  { label: "Всё", months: 0 }, // 0 = вся история
 ];
 
 export default function FinancePage({ onBack }: { onBack: () => void }) {
@@ -232,8 +233,9 @@ export default function FinancePage({ onBack }: { onBack: () => void }) {
     }
   };
 
-  const fromMonth = monthsAgo(period - 1);
-  const toMonth = currentMonth();
+  // period === 0 → «Всё»: пустые from/to, бэкенд отдаёт всю историю.
+  const fromMonth = period === 0 ? "" : monthsAgo(period - 1);
+  const toMonth = period === 0 ? "" : currentMonth();
 
   // last 30 days for balance sparklines
   const today = new Date();
@@ -392,7 +394,7 @@ export default function FinancePage({ onBack }: { onBack: () => void }) {
             </button>
           ))}
           <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 8 }}>
-            {monthLabel(fromMonth)} — {monthLabel(toMonth)}
+            {period === 0 ? "весь период" : `${monthLabel(fromMonth)} — ${monthLabel(toMonth)}`}
           </span>
           {isOwner && (
             <>
